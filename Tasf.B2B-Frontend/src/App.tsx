@@ -1,0 +1,1689 @@
+import React, { useState, useEffect, useRef, useMemo } from "react";
+import {
+  Plane,
+  Loader2,
+  Upload,
+  Activity,
+  FileText,
+  Calendar,
+} from "lucide-react";
+import MapArea from "./components/MapArea";
+import {
+  iniciarSimulacionPeriodo,
+  obtenerEstadoSimulacion,
+} from "./services/simulacionService";
+import {
+  cargarAeropuertos,
+  cargarVuelos,
+  cargarEnvios,
+} from "./services/dataCargaService";
+import type { Solucion } from "./types";
+import SimulacionDiariaPage from "./pages/SimulacionDiariaPage";
+
+type Vista = "dia-a-dia" | "mapa" | "cargar";
+
+interface EstadoCarga {
+  cargando: boolean;
+  mensaje: string;
+  error: boolean;
+}
+
+const estadoInicial: EstadoCarga = {
+  cargando: false,
+  mensaje: "",
+  error: false,
+};
+
+
+const formatearDuracion = (ms: number): string => {
+  const totalSegundos = Math.max(0, Math.floor(ms / 1000));
+  const horas = Math.floor(totalSegundos / 3600);
+  const minutos = Math.floor((totalSegundos % 3600) / 60);
+  const segundos = totalSegundos % 60;
+  return [horas, minutos, segundos]
+    .map((n) => String(n).padStart(2, "0"))
+    .join(":");
+};
+
+function parseHoraAMin(h: string) { const [hh, mm] = h.split(":").map(Number); return hh * 60 + mm; }
+
+function clasificarVuelo(fechaSalidaStr: string, horaSalida: string, horaLlegada: string, fechaInicioSim: string, minutosActuales: number) {
+  if (!fechaSalidaStr || !horaSalida || !fechaInicioSim) return 'espera';
+  const [fy, fm, fd] = fechaInicioSim.split("-").map(Number);
+  const [vy, vm, vd] = fechaSalidaStr.split("-").map(Number);
+  if (isNaN(fy) || isNaN(vy)) return 'espera';
+  const dias = Math.floor((new Date(vy, vm-1, vd).getTime() - new Date(fy, fm-1, fd).getTime()) / 86400000);
+  const minSalida = dias * 1440 + parseHoraAMin(horaSalida);
+  if (!horaLlegada) return minutosActuales < minSalida ? 'espera' : 'vuelo';
+  let minLlegada = dias * 1440 + parseHoraAMin(horaLlegada);
+  if (minLlegada <= minSalida) minLlegada += 1440;
+  if (minutosActuales < minSalida) return 'espera';
+  if (minutosActuales < minLlegada) return 'vuelo';
+  return 'completado';
+}
+
+function WidgetTiempos({ horaRealActual, tiempoTranscurrido, tiempoSimuladoTranscurrido, minutosVirtualesTotales, horaInicio }: {
+  horaRealActual: string; tiempoTranscurrido: string; tiempoSimuladoTranscurrido: string; minutosVirtualesTotales: number; horaInicio: string;
+}) {
+  const [abierto, setAbierto] = React.useState(true);
+  return (
+    <div className="absolute top-3 left-3 z-[1000] w-80 rounded-2xl shadow-2xl bg-slate-900 border border-slate-700 overflow-hidden">
+      {/* MOMENTO PRESENTE */}
+      <button onClick={() => setAbierto(v => !v)} className="w-full px-4 pt-3 pb-2 flex items-center justify-between hover:bg-slate-800 transition-colors">
+        <p className="text-[10px] font-bold text-slate-300 uppercase tracking-widest flex items-center gap-1.5">
+          <span className="w-2 h-2 rounded-full bg-blue-400" /> MOMENTO PRESENTE
+        </p>
+        <span className="text-slate-500 text-xs">{abierto ? '▲' : '▼'}</span>
+      </button>
+      {abierto && <>
+        <div className="px-4 pb-3">
+          <div className="grid grid-cols-2 gap-2">
+            <div className="bg-slate-800 rounded-xl p-3">
+              <p className="text-[9px] text-slate-400 flex items-center gap-1 mb-1">📅 Fecha y hora real</p>
+              <p className="text-sm font-bold text-white font-mono leading-tight">{horaRealActual ? horaRealActual.split(" ")[0] : "—"}</p>
+              <p className="text-sm text-slate-300 font-mono leading-tight">{horaRealActual ? horaRealActual.split(" ")[1] : ""}</p>
+            </div>
+            <div className="bg-slate-800 rounded-xl p-3">
+              <p className="text-[9px] text-slate-400 flex items-center gap-1 mb-1">⏱ Tiempo transcurrido</p>
+              <p className="text-xl font-bold text-white font-mono leading-tight">{tiempoTranscurrido || "—"}</p>
+              <p className="text-[9px] text-slate-500 mt-0.5">minutos desde inicio</p>
+            </div>
+          </div>
+        </div>
+        {/* MOMENTO SIMULADO */}
+        <div className="border-t border-slate-700 px-4 pt-3 pb-4">
+          <p className="text-[10px] font-bold text-emerald-400 uppercase tracking-widest flex items-center gap-1.5 mb-2">
+            <span className="w-2 h-2 rounded-full bg-emerald-400" /> MOMENTO SIMULADO
+          </p>
+          <div className="grid grid-cols-2 gap-2">
+            <div className="bg-slate-800 rounded-xl p-3">
+              <p className="text-[9px] text-slate-400 flex items-center gap-1 mb-1">📅 Fecha y hora simulada</p>
+              <p className="text-sm font-bold text-emerald-300 font-mono leading-tight">{tiempoSimuladoTranscurrido ? tiempoSimuladoTranscurrido.split(" ")[0] : "—"}</p>
+              <p className="text-sm text-emerald-300 font-mono leading-tight">{tiempoSimuladoTranscurrido ? tiempoSimuladoTranscurrido.split(" ")[1] : ""}</p>
+            </div>
+            <div className="bg-slate-800 rounded-xl p-3">
+              <p className="text-[9px] text-slate-400 flex items-center gap-1 mb-1">⏱ Tiempo simulado transcurrido</p>
+              {(() => {
+                const [hh, mm] = horaInicio.split(":").map(Number);
+                const offset = ((hh || 0) * 60 + (mm || 0));
+                const elapsed = Math.max(0, minutosVirtualesTotales - offset);
+                if (!elapsed && !minutosVirtualesTotales) return <p className="text-xl font-bold text-emerald-300 font-mono leading-tight">—</p>;
+                const d = Math.floor(elapsed / 1440);
+                const h = Math.floor((elapsed % 1440) / 60);
+                return <p className="text-xl font-bold text-emerald-300 font-mono leading-tight">{d}d {String(h).padStart(2,"0")}h</p>;
+              })()}
+              <p className="text-[9px] text-slate-500 mt-0.5">desde inicio simulado</p>
+            </div>
+          </div>
+        </div>
+      </>}
+    </div>
+  );
+}
+
+function DrawerVuelos({ resultado, minutosVirtualesTotales, fechaInicio, onSeleccionar, onCerrar }: {
+  resultado: any; minutosVirtualesTotales: number; fechaInicio: string;
+  onSeleccionar: (key: string) => void; onCerrar: () => void;
+}) {
+  const [orden, setOrden] = useState<{ col: 'cant'|'envios'|'minSalida'|'minLlegada'|'origen'|'destino'; dir: 1|-1 }>({ col: 'minSalida', dir: 1 });
+  const [filtrosAbiertos, setFiltrosAbiertos] = useState(false);
+  const [filtroOrigen, setFiltroOrigen] = useState('');
+  const [filtroDestino, setFiltroDestino] = useState('');
+
+  const normH = (t: string) => { const p = (t??"").split(":"); return `${p[0].padStart(2,"0")}:${(p[1]??"00").padStart(2,"0")}:${(p[2]??"00").padStart(2,"0")}`; };
+
+  const vuelosActivos = useMemo(() => {
+    if (!resultado) return [];
+    // Contar envíos por vuelo
+    const enviosPorVuelo = new Map<string, number>();
+    Object.entries(resultado.rutasAsignadas ?? {}).forEach(([, tramos]: any) => {
+      tramos.forEach((v: any) => {
+        const k = `${v.origen}-${v.destino}-${normH(v.horaSalida??"")}`;
+        enviosPorVuelo.set(k, (enviosPorVuelo.get(k) ?? 0) + 1);
+      });
+    });
+
+    const horasLlegadaMap = resultado.horasLlegada ?? {};
+
+    return Object.entries(resultado.ocupacionVuelos ?? {})
+      .filter(([, cant]) => (cant as number) > 0)
+      .map(([key, cant]) => {
+        const idx = key.lastIndexOf("_");
+        if (idx < 0) return null;
+        const sinFecha = key.substring(0, idx);
+        const fecha = key.substring(idx + 1);
+        const partes = sinFecha.split("-");
+        if (partes.length < 3 || !fecha) return null;
+        const origen = partes[0], destino = partes[1], horaSalida = normH(partes.slice(2).join(":"));
+        // Buscar horaLlegada desde el mapa dedicado (clave sin fecha)
+        const claveRuta = `${origen}-${destino}-${horaSalida}`;
+        const horaLlegada = normH(horasLlegadaMap[claveRuta] ?? horasLlegadaMap[sinFecha] ?? "");
+        if (!horaLlegada || horaLlegada === "00:00") return null; // vuelo sin datos de llegada
+        const [fy, fm, fd] = fechaInicio.split("-").map(Number);
+        const [vy, vm, vd] = fecha.split("-").map(Number);
+        const dias = Math.floor((new Date(vy,vm-1,vd).getTime() - new Date(fy,fm-1,fd).getTime()) / 86400000);
+        const minSalida = dias * 1440 + parseHoraAMin(horaSalida);
+        let minLlegada = dias * 1440 + parseHoraAMin(horaLlegada);
+        if (minLlegada <= minSalida) minLlegada += 1440;
+        if (minutosVirtualesTotales < minSalida || minutosVirtualesTotales >= minLlegada) return null;
+        const envios = enviosPorVuelo.get(`${origen}-${destino}-${horaSalida}`) ?? 0;
+        return { key, origen, destino, horaSalida, horaLlegada, fecha, cant: cant as number, envios, minSalida, minLlegada };
+      })
+      .filter(Boolean) as any[];
+  }, [resultado, minutosVirtualesTotales, fechaInicio]);
+
+  const ordenado = useMemo(() => {
+    const fo = filtroOrigen.trim().toUpperCase();
+    const fd = filtroDestino.trim().toUpperCase();
+    return [...vuelosActivos]
+      .filter(v =>
+        (!fo || v.origen.toUpperCase().includes(fo)) &&
+        (!fd || v.destino.toUpperCase().includes(fd))
+      )
+      .sort((a, b) => {
+        if (orden.col === 'origen' || orden.col === 'destino')
+          return a[orden.col].localeCompare(b[orden.col]) * orden.dir;
+        return (a[orden.col] - b[orden.col]) * orden.dir;
+      });
+  }, [vuelosActivos, orden, filtroOrigen, filtroDestino]);
+
+  const [expandido, setExpandido] = useState<string | null>(null);
+
+  const enviosPorVueloKey = useMemo(() => {
+    const map: Record<string, any[]> = {};
+    if (!resultado) return map;
+    const detalles = resultado.detallesEnvios ?? {};
+    const fechasTramos = resultado.fechasTramos ?? {};
+    Object.entries(resultado.rutasAsignadas ?? {}).forEach(([id, tramos]: any) => {
+      const fechas: string[] = fechasTramos[id] ?? [];
+      tramos.forEach((v: any, i: number) => {
+        const fecha = fechas[i];
+        const k = `${v.origen}-${v.destino}-${normH(v.horaSalida??'')}`;
+        const key = fecha ? `${k}_${fecha}` : k;
+        if (!map[key]) map[key] = [];
+        map[key].push({ id, ...detalles[id] });
+      });
+    });
+    return map;
+  }, [resultado]);
+
+  const thClass = (col: typeof orden.col) =>
+    `px-2 py-2 text-left cursor-pointer select-none hover:text-white transition-colors ${orden.col === col ? 'text-tasf-green' : 'text-slate-400'}`;
+  const indicator = (col: typeof orden.col) => orden.col === col ? (orden.dir === 1 ? ' ↑' : ' ↓') : ' ↕';
+  const toggleOrden = (col: typeof orden.col) =>
+    setOrden(o => o.col === col ? { col, dir: o.dir === 1 ? -1 : 1 } : { col, dir: 1 });
+
+  return (
+    <>
+      <div className="px-4 py-3 border-b border-slate-700 flex items-center justify-between shrink-0">
+        <h3 className="text-white font-bold text-sm">✈ En el aire ahora ({ordenado.length}{ordenado.length !== vuelosActivos.length ? `/${vuelosActivos.length}` : ''})</h3>
+        <div className="flex items-center gap-2">
+          <button onClick={() => setFiltrosAbiertos(v => !v)}
+            className={`text-[10px] px-2 py-0.5 rounded border transition-colors ${filtrosAbiertos || filtroOrigen || filtroDestino ? 'border-tasf-green bg-tasf-green/20 text-tasf-green' : 'border-slate-600 text-slate-400 hover:text-white hover:border-slate-400'}`}>
+            ⚙ {filtrosAbiertos ? '▲' : '▼'}{(filtroOrigen || filtroDestino) ? ' •' : ''}
+          </button>
+          <button onClick={onCerrar} className="text-slate-400 hover:text-white text-lg leading-none">✕</button>
+        </div>
+      </div>
+      {/* Panel de filtros desplegable */}
+      <div className={`overflow-hidden transition-all duration-200 border-b border-slate-700 bg-slate-900 ${filtrosAbiertos ? 'max-h-20' : 'max-h-0'}`}>
+        <div className="flex gap-2 px-4 py-2">
+          <div className="flex-1">
+            <label className="text-[9px] text-slate-500 uppercase tracking-wider block mb-1">Origen</label>
+            <input value={filtroOrigen} onChange={e => setFiltroOrigen(e.target.value)}
+              placeholder="Ej: SPIM"
+              className="w-full bg-slate-700 text-white text-[11px] rounded px-2 py-1 placeholder-slate-500 outline-none focus:ring-1 focus:ring-tasf-green" />
+          </div>
+          <div className="flex-1">
+            <label className="text-[9px] text-slate-500 uppercase tracking-wider block mb-1">Destino</label>
+            <input value={filtroDestino} onChange={e => setFiltroDestino(e.target.value)}
+              placeholder="Ej: OAKB"
+              className="w-full bg-slate-700 text-white text-[11px] rounded px-2 py-1 placeholder-slate-500 outline-none focus:ring-1 focus:ring-tasf-green" />
+          </div>
+          {(filtroOrigen || filtroDestino) && (
+            <button onClick={() => { setFiltroOrigen(''); setFiltroDestino(''); }}
+              className="self-end text-[10px] text-slate-400 hover:text-white px-2 py-1 rounded bg-slate-700 hover:bg-slate-600 transition-colors mb-0.5">
+              ✕
+            </button>
+          )}
+        </div>
+      </div>
+      <div className="px-3 py-1 border-b border-slate-700 shrink-0">
+        <p className="text-[9px] text-slate-500 italic">👆 Haz clic en una fila para ver los envíos consolidados</p>
+      </div>
+      <div className="overflow-y-auto flex-1">
+        <table className="w-full text-[11px] text-white">
+          <thead className="sticky top-0 bg-slate-800 text-[9px] uppercase tracking-wider z-10">
+            <tr>
+              <th className="px-3 py-2 text-left text-slate-400 w-6"></th>
+              <th className="px-3 py-2 text-left text-slate-400">ID Vuelo</th>
+              <th className={thClass('origen')} onClick={() => toggleOrden('origen')}>Origen{indicator('origen')}</th>
+              <th className={thClass('destino')} onClick={() => toggleOrden('destino')}>Destino{indicator('destino')}</th>
+              <th className={thClass('cant')} onClick={() => toggleOrden('cant')}>Ocupación{indicator('cant')}</th>
+              <th className={thClass('minSalida')} onClick={() => toggleOrden('minSalida')}>Hora Salida{indicator('minSalida')}</th>
+              <th className={thClass('minLlegada')} onClick={() => toggleOrden('minLlegada')}>Hora Llegada{indicator('minLlegada')}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {ordenado.length === 0 ? (
+              <tr><td colSpan={7} className="text-center text-slate-500 py-8 italic">Sin vuelos activos</td></tr>
+            ) : ordenado.map((v: any) => {
+              const abierto = expandido === v.key;
+              const enviosDelVuelo = enviosPorVueloKey[v.key] ?? [];
+              return (
+                <React.Fragment key={v.key}>
+                  <tr
+                    onClick={() => { setExpandido(abierto ? null : v.key); onSeleccionar(v.key); }}
+                    className={`border-b border-slate-800 cursor-pointer transition-colors ${abierto ? 'bg-slate-800' : 'hover:bg-slate-800/60'}`}>
+                    <td className="px-3 py-2 text-slate-400 text-center">{abierto ? '▼' : '▶'}</td>
+                    <td className="px-3 py-2 font-mono text-[10px] text-slate-200 font-bold">
+                      {v.origen}-{v.destino}-{v.horaSalida}<br/>
+                      <span className="text-slate-500 text-[9px] font-normal">{v.fecha}</span>
+                    </td>
+                    <td className="px-2 py-2 font-bold">{v.origen}</td>
+                    <td className="px-2 py-2 font-bold">{v.destino}</td>
+                    <td className="px-2 py-2 text-center">
+                      <span className="bg-yellow-500/20 text-yellow-400 font-bold px-1.5 py-0.5 rounded text-[10px]">{v.cant} mal.</span>
+                    </td>
+                    <td className="px-2 py-2 text-tasf-green font-mono">{v.horaSalida}</td>
+                    <td className="px-2 py-2 font-mono text-slate-300">{v.horaLlegada}</td>
+                  </tr>
+                  {abierto && (
+                    <tr className="border-b border-slate-700">
+                      <td colSpan={7} className="bg-slate-900 px-0 py-0">
+                        <div className="px-4 py-3">
+                          <p className="text-[10px] font-bold text-tasf-green mb-2">
+                            📦 Envíos consolidados en la UT: {v.origen}-{v.destino}-{v.horaSalida}
+                          </p>
+                          {enviosDelVuelo.length === 0 ? (
+                            <p className="text-slate-500 italic text-[10px]">Sin envíos asignados</p>
+                          ) : (
+                            <table className="w-full text-[10px] text-white">
+                              <thead>
+                                <tr className="text-[9px] uppercase text-slate-500 border-b border-slate-700">
+                                  <th className="pb-1 text-left">ID Envío</th>
+                                  <th className="pb-1 text-left">ID Cliente</th>
+                                  <th className="pb-1 text-left">Cant. Maletas</th>
+                                  <th className="pb-1 text-left">Origen</th>
+                                  <th className="pb-1 text-left">Destino</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {enviosDelVuelo.map((e: any) => (
+                                  <tr key={e.id} className="border-b border-slate-800">
+                                    <td className="py-1 font-mono text-tasf-green">{e.id}</td>
+                                    <td className="py-1 font-mono text-slate-300">{e.idCliente}</td>
+                                    <td className="py-1">
+                                      <span className={`font-bold px-1.5 py-0.5 rounded ${e.cantidadMaletas >= 10 ? 'bg-yellow-500/20 text-yellow-400' : 'bg-tasf-green/20 text-tasf-green'}`}>
+                                        {e.cantidadMaletas} mal.
+                                      </span>
+                                    </td>
+                                    <td className="py-1 font-bold">{e.origen}</td>
+                                    <td className="py-1 font-bold">{e.destino}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </React.Fragment>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </>
+  );
+}
+
+function DrawerAlmacenes({ resultado, minutosVirtualesTotales, fechaInicioSim, onCerrar, onSeleccionarAeropuerto }: {
+  resultado: any; minutosVirtualesTotales: number; fechaInicioSim: string; onCerrar: () => void;
+  onSeleccionarAeropuerto: (codigo: string) => void;
+}) {
+  type Col = 'codigo'|'ocupacion'|'capacidad'|'pct'|'enviosEntran'|'maletasEntran'|'enviosSalen'|'maletasSalen';
+  const [orden, setOrden] = useState<{ col: Col; dir: 1|-1 }>({ col: 'pct', dir: -1 });
+  const [expandido, setExpandido] = useState<string | null>(null);
+
+  const normH = (t: string) => { const p = (t ?? '').split(':'); return `${p[0].padStart(2,'0')}:${(p[1]??'00').padStart(2,'0')}:${(p[2]??'00').padStart(2,'0')}`; };
+
+  const almacenes = useMemo<{ filas: any[] }>(() => {
+    if (!resultado) return [];
+    const ocupacionAero = resultado.ocupacionAeropuertos ?? {};
+    const capacidadesAero = resultado.capacidadesAeropuertos ?? {};
+    const detalles = resultado.detallesEnvios ?? {};
+    const rutasAsignadas = resultado.rutasAsignadas ?? {};
+    const ocupacionVuelos = resultado.ocupacionVuelos ?? {};
+
+    // Sumar ocupación por aeropuerto (agrupa todas las fechas)
+    const ocupPorAero: Record<string, number> = {};
+    Object.entries(ocupacionAero as Record<string, number>).forEach(([key, cant]) => {
+      const base = key.split('_')[0];
+      ocupPorAero[base] = (ocupPorAero[base] ?? 0) + cant;
+    });
+
+    // Pre-construir lookup "ORIG-DEST-HH:MM" → fechaSalida — O(k) una vez, evita O(n×m×k)
+    const tramoClaveFecha = new Map<string, string>();
+    Object.keys(ocupacionVuelos).forEach(k => {
+      const idx = k.lastIndexOf('_');
+      if (idx === -1) return;
+      const sinFecha = k.substring(0, idx);
+      const fecha = k.substring(idx + 1);
+      const partes = sinFecha.split('-');
+      if (partes.length >= 3) {
+        tramoClaveFecha.set(`${partes[0]}-${partes[1]}-${normH(partes[2])}`, fecha);
+      }
+    });
+
+    const enviosPorAero: Record<string, { entran: { id: string; idCliente: string; maletas: number; origen: string; destino: string }[]; salen: { id: string; idCliente: string; maletas: number; origen: string; destino: string }[] }> = {};
+    const asegurar = (cod: string) => {
+      if (!enviosPorAero[cod]) enviosPorAero[cod] = { entran: [], salen: [] };
+    };
+
+    Object.entries(detalles as Record<string, any>).forEach(([id, detalle]) => {
+      const tramos: any[] = rutasAsignadas[id] ?? [];
+      const mal = detalle.cantidadMaletas;
+      const item = { id, idCliente: detalle.idCliente, maletas: mal, origen: detalle.origen, destino: detalle.destino };
+      tramos.forEach((v: any) => {
+        const clave = `${v.origen}-${v.destino}-${normH(v.horaSalida??'')}`;
+        const fechaSalida = tramoClaveFecha.get(clave);
+        if (!fechaSalida) return;
+        const estadoTramo = clasificarVuelo(fechaSalida, normH(v.horaSalida), normH(v.horaLlegada), fechaInicioSim, minutosVirtualesTotales);
+        if (estadoTramo === 'vuelo') {
+          asegurar(v.destino);
+          enviosPorAero[v.destino].entran.push(item);
+        }
+        if (estadoTramo === 'espera') {
+          asegurar(v.origen);
+          enviosPorAero[v.origen].salen.push(item);
+        }
+      });
+    });
+
+    // Construir filas
+    const codigos = new Set([
+      ...Object.keys(ocupPorAero),
+      ...Object.keys(capacidadesAero),
+      ...Object.keys(enviosPorAero),
+    ]);
+
+    const filas = Array.from(codigos).map(codigo => {
+      const ocupacion = ocupPorAero[codigo] ?? 0;
+      const capacidad = capacidadesAero[codigo] ?? 0;
+      const pct = capacidad > 0 ? Math.round((ocupacion / capacidad) * 100) : 0;
+      const flujo = enviosPorAero[codigo] ?? { entran: [], salen: [] };
+      return {
+        codigo,
+        ocupacion,
+        capacidad,
+        pct,
+        enviosEntran: flujo.entran.length,
+        maletasEntran: flujo.entran.reduce((s, e) => s + e.maletas, 0),
+        enviosSalen: flujo.salen.length,
+        maletasSalen: flujo.salen.reduce((s, e) => s + e.maletas, 0),
+        detalleEntran: flujo.entran,
+        detalleSalen: flujo.salen,
+      };
+    });
+    return { filas, enviosPorAero };
+  }, [resultado, minutosVirtualesTotales, fechaInicioSim]);
+
+  const ordenados = useMemo(() => {
+    return [...almacenes.filas].sort((a, b) => {
+      if (orden.col === 'codigo') return a.codigo.localeCompare(b.codigo) * orden.dir;
+      return ((a[orden.col] as number) - (b[orden.col] as number)) * orden.dir;
+    });
+  }, [almacenes, orden]);
+
+  const thC = (col: Col) =>
+    `px-3 py-2 text-left cursor-pointer select-none hover:text-white transition-colors whitespace-nowrap ${orden.col === col ? 'text-tasf-green' : 'text-slate-400'}`;
+  const ind = (col: Col) => orden.col === col ? (orden.dir === 1 ? ' ↑' : ' ↓') : ' ↕';
+  const tog = (col: Col) => setOrden(o => o.col === col ? { col, dir: o.dir === 1 ? -1 : 1 } : { col, dir: -1 });
+
+  const semaforo = (pct: number) => {
+    if (pct >= 80) return 'bg-red-500/20 text-red-400 border border-red-500/40';
+    if (pct >= 50) return 'bg-yellow-500/20 text-yellow-400 border border-yellow-500/40';
+    return 'bg-tasf-green/20 text-tasf-green border border-tasf-green/40';
+  };
+
+  return (
+    <>
+      <div className="px-4 py-3 border-b border-slate-700 flex items-center justify-between shrink-0">
+        <h3 className="text-white font-bold text-sm">🏭 Almacenes ({almacenes.filas.length})</h3>
+        <button onClick={onCerrar} className="text-slate-400 hover:text-white text-lg leading-none">✕</button>
+      </div>
+      <div className="px-3 py-1.5 border-b border-slate-700 shrink-0">
+        <p className="text-[9px] text-slate-500 italic">👆 Haz clic en una fila para ver envíos y navegar al aeropuerto en el mapa</p>
+      </div>
+      <div className="overflow-auto flex-1">
+        <table className="w-full text-[11px] text-white min-w-[700px]">
+          <thead className="sticky top-0 bg-slate-800 text-[9px] uppercase tracking-wider z-10">
+            <tr>
+              <th className="px-2 py-2 w-6 text-slate-400"></th>
+              <th className={thC('codigo')} onClick={() => tog('codigo')}>Aeropuerto{ind('codigo')}</th>
+              <th className={thC('ocupacion')} onClick={() => tog('ocupacion')}>Ocup. Actual{ind('ocupacion')}</th>
+              <th className={thC('capacidad')} onClick={() => tog('capacidad')}>Cap. Máx{ind('capacidad')}</th>
+              <th className={thC('pct')} onClick={() => tog('pct')}>% Ocup{ind('pct')}</th>
+              <th className={thC('enviosEntran')} onClick={() => tog('enviosEntran')}>Envíos Entran{ind('enviosEntran')}</th>
+              <th className={thC('maletasEntran')} onClick={() => tog('maletasEntran')}>Mal. Entran{ind('maletasEntran')}</th>
+              <th className={thC('enviosSalen')} onClick={() => tog('enviosSalen')}>Envíos Salen{ind('enviosSalen')}</th>
+              <th className={thC('maletasSalen')} onClick={() => tog('maletasSalen')}>Mal. Salen{ind('maletasSalen')}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {ordenados.length === 0 ? (
+              <tr><td colSpan={9} className="text-center text-slate-500 py-8 italic">Sin datos</td></tr>
+            ) : ordenados.map((a: any) => {
+              const abierto = expandido === a.codigo;
+              return (
+                <React.Fragment key={a.codigo}>
+                  <tr
+                    onClick={() => { setExpandido(abierto ? null : a.codigo); onSeleccionarAeropuerto(a.codigo); }}
+                    className={`border-b border-slate-800 cursor-pointer transition-colors ${abierto ? 'bg-slate-800' : 'hover:bg-slate-800/60'}`}>
+                    <td className="px-2 py-2 text-slate-400 text-center">{abierto ? '▼' : '▶'}</td>
+                    <td className="px-3 py-2 font-bold text-white font-mono text-sm">{a.codigo}</td>
+                    <td className="px-3 py-2">
+                      <span className="bg-yellow-500/20 text-yellow-400 font-bold px-2 py-0.5 rounded text-[10px]">{a.ocupacion} mal.</span>
+                    </td>
+                    <td className="px-3 py-2 text-slate-300 font-mono">{a.capacidad}</td>
+                    <td className="px-3 py-2">
+                      <span className={`font-bold px-2 py-0.5 rounded text-[10px] ${semaforo(a.pct)}`}>{a.pct}%</span>
+                    </td>
+                    <td className="px-3 py-2 text-center">
+                      <span className="bg-slate-700 text-slate-200 font-bold px-2 py-0.5 rounded text-[10px]">{a.enviosEntran} envíos</span>
+                    </td>
+                    <td className="px-3 py-2 text-center">
+                      <span className="bg-tasf-green/20 text-tasf-green font-bold px-2 py-0.5 rounded text-[10px]">{a.maletasEntran} mal.</span>
+                    </td>
+                    <td className="px-3 py-2 text-center">
+                      <span className="bg-slate-700 text-slate-200 font-bold px-2 py-0.5 rounded text-[10px]">{a.enviosSalen} envíos</span>
+                    </td>
+                    <td className="px-3 py-2 text-center">
+                      <span className="bg-yellow-500/20 text-yellow-400 font-bold px-2 py-0.5 rounded text-[10px]">{a.maletasSalen} mal.</span>
+                    </td>
+                  </tr>
+                  {abierto && (
+                    <tr className="border-b border-slate-700">
+                      <td colSpan={9} className="bg-slate-900 px-0 py-0">
+                        <div className="px-4 py-3 flex gap-6">
+                          {/* Entran */}
+                          <div className="flex-1">
+                            <p className="text-[10px] font-bold text-tasf-green mb-2">📥 Envíos que entran ({a.detalleEntran.length})</p>
+                            {a.detalleEntran.length === 0 ? <p className="text-slate-500 text-[10px] italic">Sin envíos</p> : (
+                              <table className="w-full text-[10px]">
+                                <thead><tr className="text-[9px] text-slate-500 border-b border-slate-700">
+                                  <th className="pb-1 text-left">ID Envío</th>
+                                  <th className="pb-1 text-left">Cliente</th>
+                                  <th className="pb-1 text-left">Mal.</th>
+                                  <th className="pb-1 text-left">Origen</th>
+                                  <th className="pb-1 text-left">Destino</th>
+                                </tr></thead>
+                                <tbody>
+                                  {a.detalleEntran.map((e: any, i: number) => (
+                                    <tr key={i} className="border-b border-slate-800 text-white">
+                                      <td className="py-1 font-mono text-tasf-green">{e.id}</td>
+                                      <td className="py-1 text-slate-300">{e.idCliente}</td>
+                                      <td className="py-1"><span className={`font-bold px-1 rounded ${e.maletas >= 10 ? 'text-yellow-400' : 'text-tasf-green'}`}>{e.maletas}</span></td>
+                                      <td className="py-1 font-bold">{e.origen}</td>
+                                      <td className="py-1 font-bold">{e.destino}</td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            )}
+                          </div>
+                          <div className="w-px bg-slate-700" />
+                          {/* Salen */}
+                          <div className="flex-1">
+                            <p className="text-[10px] font-bold text-yellow-400 mb-2">📤 Envíos que salen ({a.detalleSalen.length})</p>
+                            {a.detalleSalen.length === 0 ? <p className="text-slate-500 text-[10px] italic">Sin envíos</p> : (
+                              <table className="w-full text-[10px]">
+                                <thead><tr className="text-[9px] text-slate-500 border-b border-slate-700">
+                                  <th className="pb-1 text-left">ID Envío</th>
+                                  <th className="pb-1 text-left">Cliente</th>
+                                  <th className="pb-1 text-left">Mal.</th>
+                                  <th className="pb-1 text-left">Origen</th>
+                                  <th className="pb-1 text-left">Destino</th>
+                                </tr></thead>
+                                <tbody>
+                                  {a.detalleSalen.map((e: any, i: number) => (
+                                    <tr key={i} className="border-b border-slate-800 text-white">
+                                      <td className="py-1 font-mono text-tasf-green">{e.id}</td>
+                                      <td className="py-1 text-slate-300">{e.idCliente}</td>
+                                      <td className="py-1"><span className={`font-bold px-1 rounded ${e.maletas >= 10 ? 'text-yellow-400' : 'text-tasf-green'}`}>{e.maletas}</span></td>
+                                      <td className="py-1 font-bold">{e.origen}</td>
+                                      <td className="py-1 font-bold">{e.destino}</td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            )}
+                          </div>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </React.Fragment>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </>
+  );
+}
+
+function DrawerEnvios({ resultado, minutosVirtualesTotales, fechaInicioSim, onCerrar }: {
+  resultado: any; minutosVirtualesTotales: number; fechaInicioSim: string; onCerrar: () => void;
+}) {
+  type Col = 'id'|'idCliente'|'vuelo'|'maletas'|'origen'|'destino';
+  type Tab = 'vuelo'|'espera'|'completado';
+  const [tab, setTab] = useState<Tab>('vuelo');
+  const [orden, setOrden] = useState<{ col: Col; dir: 1|-1 }>({ col: 'id', dir: 1 });
+  const [filtrosAbiertos, setFiltrosAbiertos] = useState(false);
+  const [filtroOrigen, setFiltroOrigen] = useState('');
+  const [filtroDestino, setFiltroDestino] = useState('');
+  // Completados: input horas + estado aplicado
+  const [horasInput, setHorasInput] = useState('4');
+  const [horasAplicadas, setHorasAplicadas] = useState<number | null>(null);
+
+  const normH = (t: string) => { const p = (t ?? '').split(':'); return `${p[0].padStart(2,'0')}:${(p[1]??'00').padStart(2,'0')}:${(p[2]??'00').padStart(2,'0')}`; };
+
+  const grupos = useMemo(() => {
+    const detalles = resultado?.detallesEnvios ?? {};
+    const rutasAsignadas = resultado?.rutasAsignadas ?? {};
+    const ocupacionVuelos = resultado?.ocupacionVuelos ?? {};
+    const result: Record<Tab, any[]> = { vuelo: [], espera: [], completado: [] };
+
+    Object.entries(detalles as Record<string, any>).forEach(([id, detalle]) => {
+      const tramos: any[] = rutasAsignadas[id] ?? [];
+      let estado: Tab = 'espera';
+      let minLlegadaFinal = 0;
+      if (tramos.length > 0) {
+        let hayVuelo = false, todosCompletos = true;
+        for (const v of tramos) {
+          const fechaSalida = Object.keys(ocupacionVuelos)
+            .find((k: string) => { const sf = k.split('_')[0]; const p = sf.split('-'); return p[0]===v.origen && p[1]===v.destino && normH(p[2])===normH(v.horaSalida??''); })
+            ?.split('_')[1];
+          if (!fechaSalida) { todosCompletos = false; continue; }
+          const e = clasificarVuelo(fechaSalida, normH(v.horaSalida), normH(v.horaLlegada), fechaInicioSim, minutosVirtualesTotales);
+          // calcular minutos de llegada del último tramo
+          const [fy,fm,fd2] = fechaInicioSim.split('-').map(Number);
+          const [vy,vm,vd] = fechaSalida.split('-').map(Number);
+          const diasDiff = Math.floor((new Date(vy,vm-1,vd).getTime()-new Date(fy,fm-1,fd2).getTime())/86400000);
+          let mLleg = diasDiff*1440 + parseHoraAMin(normH(v.horaLlegada));
+          if (mLleg <= diasDiff*1440 + parseHoraAMin(normH(v.horaSalida))) mLleg += 1440;
+          if (mLleg > minLlegadaFinal) minLlegadaFinal = mLleg;
+          if (e === 'vuelo') { hayVuelo = true; todosCompletos = false; break; }
+          if (e === 'espera') todosCompletos = false;
+        }
+        estado = hayVuelo ? 'vuelo' : todosCompletos ? 'completado' : 'espera';
+      }
+      const vuelo = tramos.map(v => `${v.origen}-${v.destino}-${normH(v.horaSalida??'')}`).join(' → ') || '—';
+      result[estado].push({ id, idCliente: detalle.idCliente, vuelo, maletas: detalle.cantidadMaletas, origen: detalle.origen, destino: detalle.destino, minLlegadaFinal });
+    });
+    return result;
+  }, [resultado, minutosVirtualesTotales, fechaInicioSim]);
+
+  const filasFiltradas = useMemo(() => {
+    const fo = filtroOrigen.trim().toUpperCase();
+    const fd = filtroDestino.trim().toUpperCase();
+    let base = grupos[tab];
+    if (tab === 'completado' && horasAplicadas !== null) {
+      const minCorte = minutosVirtualesTotales - horasAplicadas * 60;
+      base = base.filter(e => e.minLlegadaFinal >= minCorte);
+    }
+    const sorted = base
+      .filter(e => (!fo || e.origen.toUpperCase().includes(fo)) && (!fd || e.destino.toUpperCase().includes(fd)))
+      .sort((a, b) => {
+        if (orden.col === 'maletas') return (a.maletas - b.maletas) * orden.dir;
+        return String(a[orden.col]).localeCompare(String(b[orden.col])) * orden.dir;
+      });
+    return tab === 'espera' ? sorted.slice(0, 100) : sorted;
+  }, [grupos, tab, orden, filtroOrigen, filtroDestino, horasAplicadas, minutosVirtualesTotales]);
+
+  const thC = (col: Col) =>
+    `px-2 py-2 text-left cursor-pointer select-none hover:text-white transition-colors whitespace-nowrap ${orden.col === col ? 'text-tasf-green' : 'text-slate-400'}`;
+  const ind = (col: Col) => orden.col === col ? (orden.dir === 1 ? ' ↑' : ' ↓') : ' ↕';
+  const tog = (col: Col) => setOrden(o => o.col === col ? { col, dir: o.dir === 1 ? -1 : 1 } : { col, dir: 1 });
+  const hayFiltros = !!(filtroOrigen || filtroDestino);
+
+  const tabs: { key: Tab; label: string; color: string }[] = [
+    { key: 'vuelo', label: 'En vuelo', color: 'text-tasf-green' },
+    { key: 'espera', label: 'En espera', color: 'text-yellow-400' },
+    { key: 'completado', label: 'Completados', color: 'text-slate-400' },
+  ];
+
+  return (
+    <>
+      <div className="px-4 py-3 border-b border-slate-700 flex items-center justify-between shrink-0">
+        <h3 className="text-white font-bold text-sm">📦 Envíos</h3>
+        <div className="flex items-center gap-2">
+          <button onClick={() => setFiltrosAbiertos(v => !v)}
+            className={`text-[10px] px-2 py-0.5 rounded border transition-colors ${filtrosAbiertos || hayFiltros ? 'border-tasf-green bg-tasf-green/20 text-tasf-green' : 'border-slate-600 text-slate-400 hover:text-white hover:border-slate-400'}`}>
+            ⚙ {filtrosAbiertos ? '▲' : '▼'}{hayFiltros ? ' •' : ''}
+          </button>
+          <button onClick={onCerrar} className="text-slate-400 hover:text-white text-lg leading-none">✕</button>
+        </div>
+      </div>
+
+      {/* Filtros desplegables */}
+      <div className={`overflow-hidden transition-all duration-200 border-b border-slate-700 bg-slate-900 ${filtrosAbiertos ? 'max-h-20' : 'max-h-0'}`}>
+        <div className="flex gap-2 px-4 pt-2 pb-2">
+          <div className="flex-1">
+            <label className="text-[9px] text-slate-500 uppercase tracking-wider block mb-1">Origen</label>
+            <input value={filtroOrigen} onChange={e => setFiltroOrigen(e.target.value)} placeholder="Ej: SPIM"
+              className="w-full bg-slate-700 text-white text-[11px] rounded px-2 py-1 placeholder-slate-500 outline-none focus:ring-1 focus:ring-tasf-green" />
+          </div>
+          <div className="flex-1">
+            <label className="text-[9px] text-slate-500 uppercase tracking-wider block mb-1">Destino</label>
+            <input value={filtroDestino} onChange={e => setFiltroDestino(e.target.value)} placeholder="Ej: OAKB"
+              className="w-full bg-slate-700 text-white text-[11px] rounded px-2 py-1 placeholder-slate-500 outline-none focus:ring-1 focus:ring-tasf-green" />
+          </div>
+          {hayFiltros && (
+            <button onClick={() => { setFiltroOrigen(''); setFiltroDestino(''); }}
+              className="self-end text-[10px] text-slate-400 hover:text-white px-2 py-1 rounded bg-slate-700 hover:bg-slate-600 transition-colors mb-0.5">✕</button>
+          )}
+        </div>
+      </div>
+
+      {/* Tabs */}
+      <div className="flex border-b border-slate-700 shrink-0">
+        {tabs.map(t => (
+          <button key={t.key} onClick={() => { setTab(t.key); if (t.key !== 'completado') setHorasAplicadas(null); }}
+            className={`flex-1 py-2 text-[9px] font-bold uppercase tracking-wider transition-colors ${tab === t.key ? `${t.color} border-b-2 border-current` : 'text-slate-500 hover:text-slate-300'}`}>
+            {t.label} ({grupos[t.key].length})
+          </button>
+        ))}
+      </div>
+
+      {/* Panel de filtro por horas (solo Completados) */}
+      {tab === 'completado' && (
+        <div className="flex items-center gap-2 px-4 py-2 border-b border-slate-700 bg-slate-900 shrink-0">
+          <span className="text-[10px] text-slate-400">Últimas</span>
+          <input type="number" min="1" max="999" value={horasInput} onChange={e => setHorasInput(e.target.value)}
+            className="w-14 bg-slate-700 text-white text-[11px] rounded px-2 py-1 outline-none focus:ring-1 focus:ring-tasf-green text-center" />
+          <span className="text-[10px] text-slate-400">horas</span>
+          <button onClick={() => setHorasAplicadas(Number(horasInput) || 4)}
+            className="ml-auto bg-tasf-green hover:bg-green-600 text-white text-[10px] font-bold px-3 py-1 rounded transition-colors">
+            Filtrar
+          </button>
+          {horasAplicadas !== null && (
+            <button onClick={() => setHorasAplicadas(null)}
+              className="text-[10px] text-slate-400 hover:text-white px-2 py-1 rounded bg-slate-700 hover:bg-slate-600 transition-colors">✕</button>
+          )}
+        </div>
+      )}
+
+      <div className="overflow-y-auto flex-1">
+        {tab === 'completado' && horasAplicadas === null ? (
+          <div className="flex flex-col items-center justify-center h-full text-center px-6">
+            <p className="text-slate-400 text-xs mb-1">Ingresa un rango de horas y presiona</p>
+            <p className="text-tasf-green font-bold text-xs">Filtrar</p>
+            <p className="text-slate-500 text-[10px] mt-2">para ver los envíos completados</p>
+          </div>
+        ) : (
+        <table className="w-full text-[11px] text-white">
+          <thead className="sticky top-0 bg-slate-800 text-[9px] uppercase tracking-wider">
+            <tr>
+              <th className={thC('id')} onClick={() => tog('id')}>ID Envío{ind('id')}</th>
+              <th className={thC('idCliente')} onClick={() => tog('idCliente')}>ID Cliente{ind('idCliente')}</th>
+              <th className={thC('vuelo')} onClick={() => tog('vuelo')}>UT (Vuelo){ind('vuelo')}</th>
+              <th className={thC('maletas')} onClick={() => tog('maletas')}>Maletas{ind('maletas')}</th>
+              <th className={thC('origen')} onClick={() => tog('origen')}>Origen{ind('origen')}</th>
+              <th className={thC('destino')} onClick={() => tog('destino')}>Destino{ind('destino')}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {filasFiltradas.length === 0 ? (
+              <tr><td colSpan={6} className="text-center text-slate-500 py-8 italic">Sin envíos</td></tr>
+            ) : filasFiltradas.map(e => (
+              <tr key={e.id} className="border-b border-slate-800 hover:bg-slate-800 transition-colors">
+                <td className="px-2 py-2 font-mono text-[10px] text-slate-200">{e.id}</td>
+                <td className="px-2 py-2 font-mono text-[10px] text-slate-300">{e.idCliente}</td>
+                <td className="px-2 py-2 font-mono text-[10px] text-slate-300 max-w-[160px] truncate" title={e.vuelo}>{e.vuelo}</td>
+                <td className="px-2 py-2 text-center">
+                  <span className={`font-bold px-1.5 py-0.5 rounded text-[10px] ${e.maletas >= 10 ? 'bg-yellow-500/20 text-yellow-400' : 'bg-tasf-green/20 text-tasf-green'}`}>{e.maletas} mal.</span>
+                </td>
+                <td className="px-2 py-2 font-bold">{e.origen}</td>
+                <td className="px-2 py-2 font-bold">{e.destino}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        )}
+        {tab === 'espera' && grupos.espera.length > 100 && (
+          <p className="text-center text-slate-500 text-[10px] py-2 italic">
+            Mostrando 100 de {grupos.espera.length} envíos en espera
+          </p>
+        )}
+      </div>
+    </>
+  );
+}
+
+function EnviosPanel({ resultado, minutosVirtualesTotales, fechaInicioSim, vueloResaltado, onLimpiarRuta }: {
+  resultado: any; minutosVirtualesTotales: number; fechaInicioSim: string;
+  vueloResaltado: string | null; onLimpiarRuta: () => void;
+}) {
+  const [tab, setTab] = useState<'vuelo'|'espera'|'completado'>('vuelo');
+  const [filtroOrigen, setFiltroOrigen] = useState('');
+  const [filtroDestino, setFiltroDestino] = useState('');
+  const normH = (t: string) => { const p = (t ?? "").split(":"); return `${p[0].padStart(2,"0")}:${(p[1]??"00").padStart(2,"0")}:${(p[2]??"00").padStart(2,"0")}`; };
+
+  const { todos, grupos } = useMemo(() => {
+    const detalles = resultado?.detallesEnvios ?? {};
+    const rutasAsignadas = resultado?.rutasAsignadas ?? {};
+    let entradas = Object.entries(detalles) as [string, any][];
+
+    // Filtrar por ruta seleccionada
+    if (vueloResaltado) {
+      const sinFecha = vueloResaltado.split("_")[0];
+      const partes = sinFecha.split("-");
+      const origenR = partes[0], destinoR = partes[1], horaR = normH(partes[2] ?? "");
+      const ids = new Set(
+        Object.entries(rutasAsignadas)
+          .filter(([, vuelos]: any) => vuelos.some((v: any) =>
+            v.origen === origenR && v.destino === destinoR && normH(v.horaSalida ?? "") === horaR))
+          .map(([id]) => id)
+      );
+      entradas = entradas.filter(([id]) => ids.has(id));
+    }
+
+    // Filtrar por origen/destino
+    if (filtroOrigen.trim()) {
+      const fo = filtroOrigen.trim().toUpperCase();
+      entradas = entradas.filter(([, d]) => (d.origen ?? '').toUpperCase().includes(fo));
+    }
+    if (filtroDestino.trim()) {
+      const fd = filtroDestino.trim().toUpperCase();
+      entradas = entradas.filter(([, d]) => (d.destino ?? '').toUpperCase().includes(fd));
+    }
+
+    // Clasificar cada envío según el estado de su último tramo activo
+    const grupos: Record<string, any[]> = { vuelo: [], espera: [], completado: [] };
+    entradas.forEach(([id, detalle]) => {
+      const tramos: any[] = rutasAsignadas[id] ?? [];
+      if (tramos.length === 0) { grupos.espera.push({ id, detalle }); return; }
+      // Determinar estado: si algún tramo está en vuelo → vuelo; si todos completados → completado; si no → espera
+      let estado = 'completado';
+      for (const v of tramos) {
+        const fechaSalida = Object.keys(resultado.ocupacionVuelos ?? {})
+          .find((k: string) => { const sf = k.split("_")[0]; const p = sf.split("-"); return p[0]===v.origen && p[1]===v.destino && normH(p[2])===normH(v.horaSalida??''); })
+          ?.split("_")[1];
+        if (!fechaSalida) { estado = 'espera'; break; }
+        const e = clasificarVuelo(fechaSalida, normH(v.horaSalida), normH(v.horaLlegada), fechaInicioSim, minutosVirtualesTotales);
+        if (e === 'vuelo') { estado = 'vuelo'; break; }
+        if (e === 'espera') { estado = 'espera'; }
+      }
+      grupos[estado].push({ id, detalle });
+    });
+    return { todos: entradas, grupos };
+  }, [resultado, vueloResaltado, minutosVirtualesTotales, fechaInicioSim, filtroOrigen, filtroDestino]);
+
+  const tabs = [
+    { key: 'vuelo' as const, label: 'En vuelo', color: 'text-tasf-green' },
+    { key: 'espera' as const, label: 'En espera', color: 'text-yellow-400' },
+    { key: 'completado' as const, label: 'Completados', color: 'text-slate-400' },
+  ];
+
+  return (
+    <div className="flex-[1.5] min-w-[260px] bg-tasf-dark rounded-xl shadow-lg border border-slate-700 flex flex-col text-white overflow-hidden">
+      <div className="flex justify-between items-center px-3 pt-3 pb-1">
+        <h3 className="text-[10px] uppercase font-bold text-slate-400 tracking-widest">
+          Envíos ({todos.length}{vueloResaltado ? " en ruta" : ""})
+        </h3>
+        {vueloResaltado && (
+          <button onClick={onLimpiarRuta}
+            className="text-[9px] text-slate-400 hover:text-white bg-slate-700 hover:bg-slate-600 px-1.5 py-0.5 rounded transition-colors">
+            ✕ limpiar
+          </button>
+        )}
+      </div>
+      <div className="flex gap-1 px-2 pb-1.5">
+        <input value={filtroOrigen} onChange={e => setFiltroOrigen(e.target.value)} placeholder="Origen…"
+          className="flex-1 bg-slate-700 text-white text-[10px] rounded px-2 py-1 placeholder-slate-500 outline-none focus:ring-1 focus:ring-tasf-green" />
+        <input value={filtroDestino} onChange={e => setFiltroDestino(e.target.value)} placeholder="Destino…"
+          className="flex-1 bg-slate-700 text-white text-[10px] rounded px-2 py-1 placeholder-slate-500 outline-none focus:ring-1 focus:ring-tasf-green" />
+      </div>
+      <div className="flex border-b border-slate-700">
+        {tabs.map(t => (
+          <button key={t.key} onClick={() => setTab(t.key)}
+            className={`flex-1 py-1.5 text-[9px] font-bold uppercase tracking-wider transition-colors ${tab === t.key ? `${t.color} border-b-2 border-current` : 'text-slate-500 hover:text-slate-300'}`}>
+            {t.label} ({grupos[t.key].length})
+          </button>
+        ))}
+      </div>
+      <div className="overflow-y-auto flex-1 p-2 space-y-1.5">
+        {!resultado ? (
+          <p className="text-slate-500 italic text-xs mt-4 text-center">Esperando datos...</p>
+        ) : grupos[tab].length === 0 ? (
+          <p className="text-slate-500 italic text-xs mt-4 text-center">Sin envíos</p>
+        ) : grupos[tab].map(({ id, detalle }) => (
+          <div key={id} className="bg-slate-800 rounded-lg px-2 py-1.5 text-[10px]">
+            <div className="flex justify-between items-center mb-0.5">
+              <span className="font-bold text-white font-mono truncate max-w-[120px]" title={id}>{id}</span>
+              <span className="text-tasf-green font-bold">{detalle.cantidadMaletas} mal.</span>
+            </div>
+            <div className="flex justify-between text-slate-400">
+              <span>{detalle.origen} → {detalle.destino}</span>
+              <span className="truncate max-w-[80px] text-right" title={detalle.idCliente}>{detalle.idCliente}</span>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function RutasPanel({ resultado, minutosVirtualesTotales, fechaInicioSim, vueloResaltado, onSeleccionarRuta }: {
+  resultado: any; minutosVirtualesTotales: number; fechaInicioSim: string;
+  vueloResaltado: string | null; onSeleccionarRuta: (uid: string | null) => void;
+}) {
+  const [tab, setTab] = useState<'vuelo'|'espera'|'completado'>('vuelo');
+  const [filtroOrigen, setFiltroOrigen] = useState('');
+  const [filtroDestino, setFiltroDestino] = useState('');
+
+  const rutas = useMemo(() => {
+    if (!resultado?.ocupacionVuelos) return { vuelo: [] as any[], espera: [] as any[], completado: [] as any[] };
+    const grupos: Record<string, any[]> = { vuelo: [], espera: [], completado: [] };
+    const vistas = new Set<string>();
+    Object.entries(resultado.ocupacionVuelos as Record<string, number>).forEach(([key, cantidad]) => {
+      if (cantidad === 0) return;
+      // key: "ORIG-DEST-HH:MM:SS_YYYY-MM-DD"
+      const [sinFecha, fechaSalida] = key.split("_");
+      if (!fechaSalida) return;
+      const partes = sinFecha.split("-");
+      if (partes.length < 3) return;
+      const uid = `${partes[0]}-${partes[1]}-${partes[2]}_${fechaSalida}`;
+      if (vistas.has(uid)) return;
+      vistas.add(uid);
+      const normHora = (t: string) => { const p = t.split(":"); return `${p[0].padStart(2,"0")}:${(p[1]??"00").padStart(2,"0")}`; };
+      const horaSalida = normHora(partes[2]);
+      // Buscar horaLlegada desde rutasAsignadas normalizando horas para comparar
+      let horaLlegada = "??:??";
+      if (resultado.rutasAsignadas) {
+        for (const ruta of Object.values(resultado.rutasAsignadas) as any[][]) {
+          const v = ruta.find((r: any) => r.origen === partes[0] && r.destino === partes[1] && normHora(r.horaSalida ?? "") === horaSalida);
+          if (v) { horaLlegada = normHora(v.horaLlegada ?? "??:??"); break; }
+        }
+      }
+      const estado = clasificarVuelo(fechaSalida, horaSalida, horaLlegada, fechaInicioSim, minutosVirtualesTotales);
+      grupos[estado].push({ uid, origen: partes[0], destino: partes[1], horaSalida, horaLlegada, fechaSalida, cantidad });
+    });
+    // Filtrar por origen/destino
+    const fo = filtroOrigen.trim().toUpperCase();
+    const fd = filtroDestino.trim().toUpperCase();
+    if (fo || fd) {
+      for (const key of Object.keys(grupos)) {
+        grupos[key] = grupos[key].filter((v: any) =>
+          (!fo || v.origen.toUpperCase().includes(fo)) &&
+          (!fd || v.destino.toUpperCase().includes(fd))
+        );
+      }
+    }
+    return grupos;
+  }, [resultado, minutosVirtualesTotales, fechaInicioSim, filtroOrigen, filtroDestino]);
+
+  const tabs = [
+    { key: 'vuelo' as const, label: 'En vuelo', color: 'text-tasf-green' },
+    { key: 'espera' as const, label: 'En espera', color: 'text-yellow-400' },
+    { key: 'completado' as const, label: 'Completados', color: 'text-slate-400' },
+  ];
+
+  return (
+    <div className="flex-[1.5] min-w-[250px] bg-tasf-dark rounded-xl shadow-lg border border-slate-700 flex flex-col text-white overflow-hidden">
+      {/* Filtros */}
+      <div className="flex gap-1 px-2 pt-2 pb-1.5">
+        <input value={filtroOrigen} onChange={e => setFiltroOrigen(e.target.value)} placeholder="Origen…"
+          className="flex-1 bg-slate-700 text-white text-[10px] rounded px-2 py-1 placeholder-slate-500 outline-none focus:ring-1 focus:ring-tasf-green" />
+        <input value={filtroDestino} onChange={e => setFiltroDestino(e.target.value)} placeholder="Destino…"
+          className="flex-1 bg-slate-700 text-white text-[10px] rounded px-2 py-1 placeholder-slate-500 outline-none focus:ring-1 focus:ring-tasf-green" />
+      </div>
+      {/* Tabs */}
+      <div className="flex border-b border-slate-700">
+        {tabs.map(t => (
+          <button key={t.key} onClick={() => setTab(t.key)}
+            className={`flex-1 py-2 text-[9px] font-bold uppercase tracking-wider transition-colors ${tab === t.key ? `${t.color} border-b-2 border-current` : 'text-slate-500 hover:text-slate-300'}`}>
+            {t.label} ({rutas[t.key].length})
+          </button>
+        ))}
+      </div>
+      {/* Lista */}
+      <div className="overflow-y-auto flex-1 p-2 space-y-1">
+        {rutas[tab].length === 0 ? (
+          <p className="text-slate-500 italic text-xs text-center mt-4">Sin rutas</p>
+        ) : rutas[tab].map(v => {
+          const seleccionado = vueloResaltado === v.uid;
+          return (
+            <div key={v.uid}
+              onClick={() => onSeleccionarRuta(seleccionado ? null : v.uid)}
+              className={`flex justify-between items-center text-xs px-2 py-1 rounded cursor-pointer transition-colors ${seleccionado ? 'bg-tasf-green/20 border-l-2 border-tasf-green' : 'hover:bg-slate-800'}`}>
+              <span className={`font-bold ${seleccionado ? 'text-tasf-green' : 'text-white'}`}>{v.origen} → {v.destino}</span>
+              <span className="text-slate-400 font-mono text-[10px]">{v.horaSalida}–{v.horaLlegada}</span>
+              <span className="text-tasf-green font-bold text-[10px]">{v.cantidad} mal.</span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function App() {
+  const [vistaActiva, setVistaActiva] = useState<Vista>("dia-a-dia");
+
+  const [fechaInicio, setFechaInicio] = useState("2026-01-05");
+  const [horaInicio, setHoraInicio] = useState("00:00");
+  const [dias, setDias] = useState(5);
+  const [fechaFin, setFechaFin] = useState("");
+  const [cargando, setCargando] = useState(false);
+  const [resultado, setResultado] = useState<Solucion | null>(null);
+  const [simulandoEnVivo, setSimulandoEnVivo] = useState(false);
+  const [porcentajeSimulacion, setPorcentajeSimulacion] = useState(0);
+  const [tiempoTranscurrido, setTiempoTranscurrido] = useState("00:00:00");
+  const [ventanaVirtual, setVentanaVirtual] = useState<string | null>(null);
+  const [horaVirtualMinutos, setHoraVirtualMinutos] = useState(0);
+  const [minutosVirtualesTotales, setMinutosVirtualesTotales] = useState(0);
+  const [vueloResaltado, setVueloResaltado] = useState<string | null>(null);
+  const horaVirtualBaseRef = useRef<{ minutos: number; realMs: number } | null>(null);
+  const ultimaVentanaRef = useRef<string | null>(null);
+  const ultimoPollRef = useRef<{ minutosTotales: number; realMs: number } | null>(null);
+  const fechaInicioRef = useRef(fechaInicio);
+  const horaInicioRef = useRef(horaInicio);
+  const diasRef = useRef(dias);
+  const [horaRealActual, setHoraRealActual] = useState("");
+  const [tiempoSimuladoTranscurrido, setTiempoSimuladoTranscurrido] = useState("");
+  const [sidebarAbierto, setSidebarAbierto] = useState(true);
+  const [panelVuelosAbierto, setPanelVuelosAbierto] = useState(false);
+  const [panelEnviosAbierto, setPanelEnviosAbierto] = useState(false);
+  const [panelAlmacenesAbierto, setPanelAlmacenesAbierto] = useState(false);
+  const [aeropuertoResaltado, setAeropuertoResaltado] = useState<string | null>(null);
+  const [modoOscuro, setModoOscuro] = useState(true);
+  const inicioRealRef = useRef<number | null>(null);
+
+  const [archivoAero, setArchivoAero] = useState<File | null>(null);
+  const [archivoVuelos, setArchivoVuelos] = useState<File | null>(null);
+  const [archivosEnvios, setArchivosEnvios] = useState<File[]>([]);
+  const [estadoAero, setEstadoAero] = useState<EstadoCarga>(estadoInicial);
+  const [estadoVuelos, setEstadoVuelos] = useState<EstadoCarga>(estadoInicial);
+  const [estadoEnvios, setEstadoEnvios] = useState<EstadoCarga>(estadoInicial);
+
+  const inputAeroRef = useRef<HTMLInputElement>(null);
+  const inputVuelosRef = useRef<HTMLInputElement>(null);
+  const inputEnviosRef = useRef<HTMLInputElement>(null);
+
+  const iniciarPolling = (jobId: string, fechaInicioSim: string) => {
+    const intervalo = setInterval(async () => {
+      try {
+        const estadoJob = await obtenerEstadoSimulacion(jobId);
+
+        setPorcentajeSimulacion(estadoJob.progreso);
+        if (estadoJob.ventanaVirtual) {
+          setVentanaVirtual(estadoJob.ventanaVirtual);
+          const ahora = Date.now();
+          if (estadoJob.ventanaVirtual !== ultimaVentanaRef.current) {
+            // Nueva ventana: recalcular minutos base desde inicio de simulación
+            ultimaVentanaRef.current = estadoJob.ventanaVirtual;
+            const partes = estadoJob.ventanaVirtual.split(" → ")[0].split(" ");
+            const [h, m] = partes[1].split(":").map(Number);
+            const [vy, vm, vd] = partes[0].split("-").map(Number);
+            const [iy, im, id] = fechaInicioSim.split("-").map(Number);
+            const fechaVentana = new Date(vy, vm - 1, vd);
+            const fechaSimInicio = new Date(iy, im - 1, id);
+            const diasTranscurridos = Math.floor((fechaVentana.getTime() - fechaSimInicio.getTime()) / (1000 * 60 * 60 * 24));
+            const minutosTotales = diasTranscurridos * 1440 + h * 60 + m;
+            ultimoPollRef.current = { minutosTotales, realMs: ahora };
+          } else if (ultimoPollRef.current) {
+            // Misma ventana: solo actualizar realMs para que segsDesdeUltimoPoll no crezca
+            ultimoPollRef.current = { ...ultimoPollRef.current, realMs: ahora };
+          }
+        }
+
+        if (estadoJob.solucionParcial) {
+          setResultado((prev) => {
+            const nueva = estadoJob.solucionParcial!;
+            // Preservar rutas/ocupaciones del paso anterior si el nuevo bloque llega vacío
+            return {
+              ...nueva,
+              rutasAsignadas: { ...(prev?.rutasAsignadas ?? {}), ...(nueva.rutasAsignadas ?? {}) },
+              detallesEnvios: { ...(prev?.detallesEnvios ?? {}), ...(nueva.detallesEnvios ?? {}) },
+              fechasTramos: { ...(prev?.fechasTramos ?? {}), ...(nueva.fechasTramos ?? {}) },
+              ocupacionVuelos: Object.keys(nueva.ocupacionVuelos ?? {}).length > 0
+                ? nueva.ocupacionVuelos
+                : (prev?.ocupacionVuelos ?? {}),
+              ocupacionAeropuertos: Object.keys(nueva.ocupacionAeropuertos ?? {}).length > 0
+                ? nueva.ocupacionAeropuertos
+                : (prev?.ocupacionAeropuertos ?? {}),
+            };
+          });
+        }
+
+        if (estadoJob.estado === "COMPLETADO" || estadoJob.estado === "ERROR") {
+          clearInterval(intervalo);
+          setSimulandoEnVivo(false);
+          localStorage.removeItem("jobIdActivo");
+
+          if (estadoJob.estado === "ERROR") {
+            alert("Error en la simulación: " + estadoJob.mensaje);
+          }
+        }
+      } catch (err) {
+        console.error("Error al consultar el estado del Job:", err);
+        clearInterval(intervalo);
+        setSimulandoEnVivo(false);
+        localStorage.removeItem("jobIdActivo");
+        localStorage.removeItem("inicioSimulacionTimestamp");
+      }
+    }, 15000);
+  };
+
+  // Cronómetro local: avanza cada segundo mientras la simulación está en curso
+  useEffect(() => {
+    if (!simulandoEnVivo) return;
+
+    // Reloj virtual: actualiza cada 250ms → saltos de 0.5 min virtual, posiciones de aviones fluidas
+    const intervaloVirtual = setInterval(() => {
+      if (!inicioRealRef.current) return;
+      const ahora = Date.now();
+      const segsDesdeInicio = (ahora - inicioRealRef.current) / 1000;
+      const [hh, mm] = horaInicioRef.current.split(":").map(Number);
+      const offsetHora = (hh || 0) * 60 + (mm || 0);
+      const minVirtuales = offsetHora + Math.min(segsDesdeInicio * 2, diasRef.current * 1440);
+      setMinutosVirtualesTotales(minVirtuales);
+      setHoraVirtualMinutos(minVirtuales % 1440);
+
+      const [fy, fm, fd] = fechaInicioRef.current.split("-").map(Number);
+      const fechaSimVirtual = new Date(fy, fm - 1, fd);
+      fechaSimVirtual.setMinutes(fechaSimVirtual.getMinutes() + minVirtuales);
+      setTiempoSimuladoTranscurrido(
+        `${fechaSimVirtual.getFullYear()}-${String(fechaSimVirtual.getMonth()+1).padStart(2,"0")}-${String(fechaSimVirtual.getDate()).padStart(2,"0")} ` +
+        `${String(fechaSimVirtual.getHours()).padStart(2,"0")}:${String(fechaSimVirtual.getMinutes()).padStart(2,"0")}:${String(fechaSimVirtual.getSeconds()).padStart(2,"0")}`
+      );
+    }, 1000);
+
+    // Reloj real: actualiza cada segundo (menos crítico)
+    const intervaloReal = setInterval(() => {
+      const ahora = Date.now();
+      if (inicioRealRef.current) {
+        setTiempoTranscurrido(formatearDuracion(ahora - inicioRealRef.current));
+      }
+      const now = new Date();
+      setHoraRealActual(
+        `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,"0")}-${String(now.getDate()).padStart(2,"0")} ` +
+        `${String(now.getHours()).padStart(2,"0")}:${String(now.getMinutes()).padStart(2,"0")}:${String(now.getSeconds()).padStart(2,"0")}`
+      );
+    }, 1000);
+
+    return () => { clearInterval(intervaloVirtual); clearInterval(intervaloReal); };
+  }, [simulandoEnVivo]);
+
+  useEffect(() => { fechaInicioRef.current = fechaInicio; }, [fechaInicio]);
+  useEffect(() => { horaInicioRef.current = horaInicio; }, [horaInicio]);
+  useEffect(() => { diasRef.current = dias; }, [dias]);
+
+  useEffect(() => {
+    if (vistaActiva === "mapa" || vistaActiva === "dia-a-dia") {
+      const timer = setTimeout(() => {
+        window.dispatchEvent(new Event("resize"));
+      }, 100);
+      return () => clearTimeout(timer);
+    }
+  }, [vistaActiva]);
+
+  useEffect(() => {
+    if (fechaInicio && horaInicio) {
+      const inicio = new Date(`${fechaInicio}T${horaInicio}`);
+      const fin = new Date(inicio.getTime());
+      fin.setDate(fin.getDate() + dias);
+      const fechaParte = `${fin.getFullYear()}-${String(fin.getMonth()+1).padStart(2,"0")}-${String(fin.getDate()).padStart(2,"0")}`;
+      const horaParte = `${String(fin.getHours()).padStart(2,"0")}:${String(fin.getMinutes()).padStart(2,"0")}`;
+      setFechaFin(`${fechaParte} ${horaParte}`);
+    }
+  }, [fechaInicio, horaInicio, dias]);
+
+  useEffect(() => {
+    const jobGuardado = localStorage.getItem("jobIdActivo");
+    if (jobGuardado) {
+      const f = localStorage.getItem("fechaActiva");
+      const h = localStorage.getItem("horaActiva");
+      const d = localStorage.getItem("diasActivos");
+      const inicioGuardado = localStorage.getItem("inicioSimulacionTimestamp");
+      if (f) setFechaInicio(f);
+      if (h) setHoraInicio(h);
+      if (d) setDias(Number(d));
+
+      inicioRealRef.current = inicioGuardado ? Number(inicioGuardado) : Date.now();
+      setSimulandoEnVivo(true);
+      iniciarPolling(jobGuardado, f ?? fechaInicio);
+    }
+  }, []);
+
+  const handleSimular = async () => {
+    setCargando(true);
+    setResultado(null);
+    setSimulandoEnVivo(false);
+    setPorcentajeSimulacion(0);
+    setTiempoTranscurrido("00:00:00");
+    setVentanaVirtual(null);
+    setMinutosVirtualesTotales(0);
+    setHoraVirtualMinutos(0);
+    setTiempoSimuladoTranscurrido("");
+    horaVirtualBaseRef.current = null;
+    ultimoPollRef.current = null;
+    ultimaVentanaRef.current = null;
+
+    try {
+      const { jobId } = await iniciarSimulacionPeriodo(
+        `${fechaInicio}T${horaInicio}:00`,
+        dias,
+      );
+
+      const inicioReal = Date.now();
+      inicioRealRef.current = inicioReal;
+
+      localStorage.setItem("jobIdActivo", jobId);
+      localStorage.setItem("fechaActiva", fechaInicio);
+      localStorage.setItem("horaActiva", horaInicio);
+      localStorage.setItem("diasActivos", dias.toString());
+      localStorage.setItem("inicioSimulacionTimestamp", inicioReal.toString());
+
+      setCargando(false);
+      setSimulandoEnVivo(true);
+
+      iniciarPolling(jobId, fechaInicio);
+    } catch (error: any) {
+      const msg =
+        error?.response?.data?.message ??
+        error?.response?.data ??
+        error?.message ??
+        "No se pudo iniciar la simulación.";
+      alert(`Error: ${msg}`);
+      setCargando(false);
+    }
+  };
+
+  const handleCargarAero = async () => {
+    if (!archivoAero) return;
+    setEstadoAero({ cargando: true, mensaje: "", error: false });
+    try {
+      const res = await cargarAeropuertos(archivoAero);
+      setEstadoAero({
+        cargando: false,
+        mensaje: `${res.registros} aeropuertos cargados`,
+        error: false,
+      });
+    } catch {
+      setEstadoAero({
+        cargando: false,
+        mensaje: "Error al cargar el archivo",
+        error: true,
+      });
+    }
+  };
+
+  const handleCargarVuelos = async () => {
+    if (!archivoVuelos) return;
+    setEstadoVuelos({ cargando: true, mensaje: "", error: false });
+    try {
+      const res = await cargarVuelos(archivoVuelos);
+      setEstadoVuelos({
+        cargando: false,
+        mensaje: `${res.registros} vuelos cargados`,
+        error: false,
+      });
+    } catch {
+      setEstadoVuelos({
+        cargando: false,
+        mensaje: "Error al cargar el archivo",
+        error: true,
+      });
+    }
+  };
+
+  const handleCargarEnvios = async () => {
+    if (archivosEnvios.length === 0) return;
+    setEstadoEnvios({ cargando: true, mensaje: "", error: false });
+    try {
+      const res = await cargarEnvios(archivosEnvios);
+      setEstadoEnvios({
+        cargando: false,
+        mensaje: `${res.registros} pedidos cargados`,
+        error: false,
+      });
+    } catch {
+      setEstadoEnvios({
+        cargando: false,
+        mensaje: "Error al cargar los archivos",
+        error: true,
+      });
+    }
+  };
+
+  const nombreArchivos = (files: File[]) => {
+    if (files.length === 0) return "No se eligió ningún archivo";
+    if (files.length === 1) return files[0].name;
+    return `${files.length} archivos seleccionados`;
+  };
+
+  // Función de apoyo para embellecer los vuelos
+  const formatearVuelo = (idVuelo: string) => {
+    const baseId = idVuelo.split("_")[0];
+    const partes = baseId.split("-");
+    if (partes.length >= 3) {
+      return (
+        <div className="flex flex-col">
+          <span className="font-bold text-tasf-dark tracking-wide text-xs">
+            {partes[0]} <span className="text-tasf-green px-1">✈️</span>{" "}
+            {partes[1]}
+          </span>
+          <span className="text-[9px] text-slate-400 font-medium">
+            SALIDA: {partes[2]}
+          </span>
+        </div>
+      );
+    }
+    return <span className="font-mono text-slate-600 text-xs">{baseId}</span>;
+  };
+
+  return (
+    <div className="flex flex-col h-screen w-full bg-tasf-gray overflow-hidden font-sans">
+      {/* ── BARRA DE NAVEGACIÓN SUPERIOR (TOP NAVBAR) ── */}
+      <header className="bg-tasf-dark text-white flex items-center justify-between px-6 py-4 shadow-md z-40">
+        <div className="flex items-center gap-3">
+          <Plane className="text-tasf-green" size={28} />
+          <h1 className="text-xl font-bold tracking-wider">Tasf.B2B</h1>
+        </div>
+
+        <nav className="flex gap-2 items-center">
+          <button
+            onClick={() => setVistaActiva("dia-a-dia")}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-colors ${vistaActiva === "dia-a-dia" ? "bg-tasf-green text-white" : "text-slate-400 hover:bg-slate-800 hover:text-white"}`}
+          >
+            <Activity size={18} /> Monitoreo en Vivo
+          </button>
+          <button
+            onClick={() => setVistaActiva("mapa")}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-colors ${vistaActiva === "mapa" ? "bg-tasf-green text-white" : "text-slate-400 hover:bg-slate-800 hover:text-white"}`}
+          >
+            <Calendar size={18} /> Simulación por periodo
+          </button>
+          <button
+            onClick={() => setVistaActiva("cargar")}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-colors ${vistaActiva === "cargar" ? "bg-tasf-green text-white" : "text-slate-400 hover:bg-slate-800 hover:text-white"}`}
+          >
+            <FileText size={18} /> Carga de Datos
+          </button>
+          <button
+            onClick={() => setModoOscuro(!modoOscuro)}
+            className="ml-2 px-3 py-2 rounded-lg text-sm transition-colors text-slate-400 hover:bg-slate-800 hover:text-white"
+            title={modoOscuro ? "Cambiar a mapa claro" : "Cambiar a mapa oscuro"}
+          >
+            {modoOscuro ? "☀️" : "🌙"}
+          </button>
+        </nav>
+      </header>
+
+      {/* ── ÁREA PRINCIPAL ── */}
+      <div className="flex-1 flex overflow-hidden relative">
+        {/* VISTA 1: Simulación Día a Día */}
+        <div
+          className={`w-full h-full ${vistaActiva === "dia-a-dia" ? "block" : "hidden"}`}
+        >
+          <SimulacionDiariaPage modoOscuro={modoOscuro} />
+        </div>
+
+        {/* VISTA 2: Análisis Predictivo */}
+        <div
+          className={`w-full h-full flex ${vistaActiva === "mapa" ? "flex" : "hidden"}`}
+        >
+          <aside className={`${sidebarAbierto ? "w-80" : "w-10"} bg-slate-900 text-white flex flex-col shadow-xl z-30 transition-all duration-300 overflow-hidden`}>
+            <button
+              onClick={() => setSidebarAbierto(!sidebarAbierto)}
+              className="w-full flex items-center justify-center py-3 text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+              title={sidebarAbierto ? "Colapsar panel" : "Expandir panel"}
+            >
+              {sidebarAbierto ? "◀" : "▶"}
+            </button>
+            <div className={`p-6 flex-1 ${sidebarAbierto ? "block" : "hidden"}`}>
+              <h2 className="text-xs uppercase text-slate-400 font-semibold mb-6 tracking-widest">
+                Parámetros de Simulación
+              </h2>
+
+              <div className="space-y-6">
+                <div className="flex flex-col">
+                  <label className="text-sm text-slate-300 mb-2">
+                    1. ESCENARIO
+                  </label>
+                  <select
+                    className="bg-white text-tasf-dark p-2 rounded focus:ring-2 focus:ring-tasf-green outline-none"
+                    value={dias}
+                    onChange={(e) => setDias(Number(e.target.value))}
+                    disabled={cargando || simulandoEnVivo}
+                  >
+                    <option value={3}>Periodo: 3 días</option>
+                    <option value={5}>Periodo: 5 días</option>
+                    <option value={7}>Periodo: 7 días</option>
+                  </select>
+                </div>
+
+                <div className="flex flex-col space-y-2">
+                  <label className="text-sm text-slate-300">
+                    2. FECHA Y HORA DE INICIO
+                  </label>
+                  <div className="flex gap-2">
+                    <input
+                      type="date"
+                      className="flex-1 bg-white text-tasf-dark p-2 rounded text-sm outline-none"
+                      value={fechaInicio}
+                      onChange={(e) => setFechaInicio(e.target.value)}
+                      disabled={cargando || simulandoEnVivo}
+                    />
+                    <input
+                      type="time"
+                      className="w-24 bg-white text-tasf-dark p-2 rounded text-sm outline-none"
+                      value={horaInicio}
+                      onChange={(e) => setHoraInicio(e.target.value)}
+                      disabled={cargando || simulandoEnVivo}
+                    />
+                  </div>
+                </div>
+
+                <div className="flex flex-col">
+                  <label className="text-sm text-slate-300 mb-2">
+                    3. FECHA Y HORA FIN
+                  </label>
+                  <div className="bg-slate-800 text-tasf-green p-3 rounded text-center font-mono font-bold border border-slate-700">
+                    {fechaFin || "Calculando..."}
+                  </div>
+                </div>
+
+                <button
+                  onClick={handleSimular}
+                  disabled={cargando || simulandoEnVivo}
+                  className="w-full bg-tasf-green hover:bg-green-600 disabled:bg-slate-600 text-white font-bold py-3 rounded transition-colors mt-4 shadow-lg flex justify-center items-center gap-2"
+                >
+                  {cargando ? (
+                    <>
+                      <Loader2 className="animate-spin" size={20} />{" "}
+                      CALCULANDO...
+                    </>
+                  ) : (
+                    "INICIAR SIMULACIÓN"
+                  )}
+                </button>
+
+              </div>
+            </div>
+          </aside>
+
+          <main className="flex-1 flex flex-col relative z-10 overflow-hidden">
+            <div className="flex-1 bg-slate-200 relative">
+              {/* Widget flotante de tiempos */}
+              {simulandoEnVivo && (
+                <WidgetTiempos
+                  horaRealActual={horaRealActual}
+                  tiempoTranscurrido={tiempoTranscurrido}
+                  tiempoSimuladoTranscurrido={tiempoSimuladoTranscurrido}
+                  minutosVirtualesTotales={minutosVirtualesTotales}
+                  horaInicio={horaInicio}
+                />
+              )}
+              <MapArea solucion={resultado} progreso={porcentajeSimulacion} modoOscuro={modoOscuro} horaVirtualMinutos={horaVirtualMinutos} minutosVirtualesTotales={minutosVirtualesTotales} fechaInicioSim={fechaInicio} vueloResaltado={vueloResaltado} onVueloResaltadoClear={() => setVueloResaltado(null)} aeropuertoResaltado={aeropuertoResaltado} />
+
+              {/* Botones flotantes */}
+              {resultado && (
+                <div className="absolute top-3 right-3 z-[1000] flex gap-2">
+                  <button
+                    onClick={() => { setPanelAlmacenesAbierto(v => !v); setPanelEnviosAbierto(false); setPanelVuelosAbierto(false); }}
+                    className="bg-slate-900 hover:bg-slate-700 text-white text-xs font-bold px-3 py-2 rounded-lg shadow-lg border border-slate-600 flex items-center gap-2 transition-colors"
+                  >
+                    🏭 Almacenes {panelAlmacenesAbierto ? '▶' : '◀'}
+                  </button>
+                  <button
+                    onClick={() => { setPanelEnviosAbierto(v => !v); setPanelVuelosAbierto(false); setPanelAlmacenesAbierto(false); }}
+                    className="bg-slate-900 hover:bg-slate-700 text-white text-xs font-bold px-3 py-2 rounded-lg shadow-lg border border-slate-600 flex items-center gap-2 transition-colors"
+                  >
+                    📦 Envíos {panelEnviosAbierto ? '▶' : '◀'}
+                  </button>
+                  <button
+                    onClick={() => { setPanelVuelosAbierto(v => !v); setPanelEnviosAbierto(false); setPanelAlmacenesAbierto(false); }}
+                    className="bg-slate-900 hover:bg-slate-700 text-white text-xs font-bold px-3 py-2 rounded-lg shadow-lg border border-slate-600 flex items-center gap-2 transition-colors"
+                  >
+                    ✈ Vuelos activos {panelVuelosAbierto ? '▶' : '◀'}
+                  </button>
+                </div>
+              )}
+
+              {/* Drawer lateral de almacenes */}
+              <div className={`absolute top-0 right-0 h-full z-[999] bg-slate-900 border-l border-slate-700 shadow-2xl flex flex-col transition-all duration-300 ${panelAlmacenesAbierto ? 'w-[780px]' : 'w-0 overflow-hidden'}`}>
+                {panelAlmacenesAbierto && (
+                  <DrawerAlmacenes
+                    resultado={resultado}
+                    minutosVirtualesTotales={minutosVirtualesTotales}
+                    fechaInicioSim={fechaInicio}
+                    onCerrar={() => setPanelAlmacenesAbierto(false)}
+                    onSeleccionarAeropuerto={setAeropuertoResaltado}
+                  />
+                )}
+              </div>
+
+              {/* Drawer lateral de envíos */}
+              <div className={`absolute top-0 right-0 h-full z-[999] bg-slate-900 border-l border-slate-700 shadow-2xl flex flex-col transition-all duration-300 ${panelEnviosAbierto ? 'w-[620px]' : 'w-0 overflow-hidden'}`}>
+                {panelEnviosAbierto && (
+                  <DrawerEnvios
+                    resultado={resultado}
+                    minutosVirtualesTotales={minutosVirtualesTotales}
+                    fechaInicioSim={fechaInicio}
+                    onCerrar={() => setPanelEnviosAbierto(false)}
+                  />
+                )}
+              </div>
+
+              {/* Drawer lateral de vuelos activos */}
+              <div className={`absolute top-0 right-0 h-full z-[999] bg-slate-900 border-l border-slate-700 shadow-2xl flex flex-col transition-all duration-300 ${panelVuelosAbierto ? "w-[460px]" : "w-0 overflow-hidden"}`}>
+                {panelVuelosAbierto && (
+                  <DrawerVuelos
+                    resultado={resultado}
+                    minutosVirtualesTotales={minutosVirtualesTotales}
+                    fechaInicio={fechaInicio}
+                    onSeleccionar={(key) => { setVueloResaltado(key); }}
+                    onCerrar={() => setPanelVuelosAbierto(false)}
+                  />
+                )}
+              </div>
+            </div>
+
+            {!simulandoEnVivo && porcentajeSimulacion === 100 && (
+              <div className="w-full bg-tasf-green text-white text-center py-2 font-bold tracking-widest uppercase shadow-md z-20">
+                SIMULACIÓN TERMINADA
+              </div>
+            )}
+
+          </main>
+        </div>
+
+        {/* VISTA 3: Cargar Datos */}
+        <div
+          className={`w-full h-full overflow-y-auto bg-slate-100 p-10 ${vistaActiva === "cargar" ? "block" : "hidden"}`}
+        >
+          <div className="max-w-2xl mx-auto">
+            <h1 className="text-3xl font-bold text-tasf-dark text-center mb-2">
+              Cargar Datos
+            </h1>
+            <p className="text-slate-500 text-center mb-8">
+              Sube los archivos .txt para poblar la base de datos
+            </p>
+
+            <div className="bg-white rounded-2xl shadow p-6 mb-4">
+              <p className="font-bold text-tasf-dark text-lg mb-1">
+                Aeropuertos
+              </p>
+              <p className="text-slate-400 text-sm mb-4">
+                Archivo: aeropuertos.txt
+              </p>
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => inputAeroRef.current?.click()}
+                  className="px-4 py-2 border border-slate-300 rounded text-sm text-slate-600 hover:bg-slate-50 transition-colors whitespace-nowrap"
+                >
+                  Elegir archivo
+                </button>
+                <input
+                  ref={inputAeroRef}
+                  type="file"
+                  accept=".txt"
+                  className="hidden"
+                  onChange={(e) => {
+                    setArchivoAero(e.target.files?.[0] ?? null);
+                    setEstadoAero(estadoInicial);
+                  }}
+                />
+                <span className="text-slate-400 text-sm flex-1 truncate">
+                  {archivoAero
+                    ? archivoAero.name
+                    : "No se eligió ningún archivo"}
+                </span>
+                <button
+                  onClick={handleCargarAero}
+                  disabled={!archivoAero || estadoAero.cargando}
+                  className="flex items-center gap-2 bg-tasf-green hover:bg-green-600 disabled:bg-slate-300 text-white font-semibold px-5 py-2 rounded transition-colors whitespace-nowrap"
+                >
+                  {estadoAero.cargando ? (
+                    <>
+                      <Loader2 size={16} className="animate-spin" /> Cargando...
+                    </>
+                  ) : (
+                    <>
+                      <Upload size={16} /> Cargar
+                    </>
+                  )}
+                </button>
+              </div>
+              {estadoAero.mensaje && (
+                <p
+                  className={`mt-3 text-sm font-medium ${estadoAero.error ? "text-red-500" : "text-tasf-green"}`}
+                >
+                  {estadoAero.mensaje}
+                </p>
+              )}
+            </div>
+
+            <div className="bg-white rounded-2xl shadow p-6 mb-4">
+              <p className="font-bold text-tasf-dark text-lg mb-1">
+                Planes de Vuelo
+              </p>
+              <p className="text-slate-400 text-sm mb-4">
+                Archivo: planesVuelos.txt
+              </p>
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => inputVuelosRef.current?.click()}
+                  className="px-4 py-2 border border-slate-300 rounded text-sm text-slate-600 hover:bg-slate-50 transition-colors whitespace-nowrap"
+                >
+                  Elegir archivo
+                </button>
+                <input
+                  ref={inputVuelosRef}
+                  type="file"
+                  accept=".txt"
+                  className="hidden"
+                  onChange={(e) => {
+                    setArchivoVuelos(e.target.files?.[0] ?? null);
+                    setEstadoVuelos(estadoInicial);
+                  }}
+                />
+                <span className="text-slate-400 text-sm flex-1 truncate">
+                  {archivoVuelos
+                    ? archivoVuelos.name
+                    : "No se eligió ningún archivo"}
+                </span>
+                <button
+                  onClick={handleCargarVuelos}
+                  disabled={!archivoVuelos || estadoVuelos.cargando}
+                  className="flex items-center gap-2 bg-tasf-green hover:bg-green-600 disabled:bg-slate-300 text-white font-semibold px-5 py-2 rounded transition-colors whitespace-nowrap"
+                >
+                  {estadoVuelos.cargando ? (
+                    <>
+                      <Loader2 size={16} className="animate-spin" /> Cargando...
+                    </>
+                  ) : (
+                    <>
+                      <Upload size={16} /> Cargar
+                    </>
+                  )}
+                </button>
+              </div>
+              {estadoVuelos.mensaje && (
+                <p
+                  className={`mt-3 text-sm font-medium ${estadoVuelos.error ? "text-red-500" : "text-tasf-green"}`}
+                >
+                  {estadoVuelos.mensaje}
+                </p>
+              )}
+            </div>
+
+            <div className="bg-white rounded-2xl shadow p-6">
+              <p className="font-bold text-tasf-dark text-lg mb-1">Envíos</p>
+              <p className="text-slate-400 text-sm mb-4">
+                Archivos: _envios_XXXX_.txt (puedes seleccionar varios a la vez)
+              </p>
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => inputEnviosRef.current?.click()}
+                  className="px-4 py-2 border border-slate-300 rounded text-sm text-slate-600 hover:bg-slate-50 transition-colors whitespace-nowrap"
+                >
+                  Elegir archivos
+                </button>
+                <input
+                  ref={inputEnviosRef}
+                  type="file"
+                  accept=".txt"
+                  multiple
+                  className="hidden"
+                  onChange={(e) => {
+                    setArchivosEnvios(
+                      e.target.files ? Array.from(e.target.files) : [],
+                    );
+                    setEstadoEnvios(estadoInicial);
+                  }}
+                />
+                <span className="text-slate-400 text-sm flex-1 truncate">
+                  {nombreArchivos(archivosEnvios)}
+                </span>
+                <button
+                  onClick={handleCargarEnvios}
+                  disabled={
+                    archivosEnvios.length === 0 || estadoEnvios.cargando
+                  }
+                  className="flex items-center gap-2 bg-tasf-green hover:bg-green-600 disabled:bg-slate-300 text-white font-semibold px-5 py-2 rounded transition-colors whitespace-nowrap"
+                >
+                  {estadoEnvios.cargando ? (
+                    <>
+                      <Loader2 size={16} className="animate-spin" /> Cargando...
+                    </>
+                  ) : (
+                    <>
+                      <Upload size={16} /> Cargar
+                    </>
+                  )}
+                </button>
+              </div>
+              {estadoEnvios.mensaje && (
+                <p
+                  className={`mt-3 text-sm font-medium ${estadoEnvios.error ? "text-red-500" : "text-tasf-green"}`}
+                >
+                  {estadoEnvios.mensaje}
+                </p>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export default App;

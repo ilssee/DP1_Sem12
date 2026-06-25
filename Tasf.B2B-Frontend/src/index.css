@@ -1,0 +1,21 @@
+/* Importamos la fuente Inter y Tailwind */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
+@import "tailwindcss";
+
+/* Definimos los estilos de Tasf.B2B */
+@theme {
+  --color-tasf-dark: #0B1C33;
+  --color-tasf-green: #178D47;
+  --color-tasf-red: #E32929;
+  --color-tasf-amber: #FFB800;
+  --color-tasf-gray: #F1F5F9;
+
+  --font-sans: 'Inter', sans-serif;
+}
+
+/* Estilos base para que ocupe toda la pantalla */
+html, body, #root {
+  height: 100%;
+  margin: 0;
+  background-color: var(--color-tasf-gray);
+}
