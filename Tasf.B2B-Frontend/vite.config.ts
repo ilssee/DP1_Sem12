@@ -8,4 +8,9 @@ export default defineConfig({
     react(),
     tailwindcss(), // <- Agregamos esta línea
   ],
+  server: {
+    proxy: {
+      '/api': 'http://localhost:8080'
+    }
+  }
 })
