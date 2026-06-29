@@ -1,40 +1,75 @@
-import React, { useState, useEffect, useRef } from "react";
-import { Play, Pause, Loader2, Calendar, PlusCircle } from "lucide-react";
-import MapAreaDiario from "../components/MapAreaDiario";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { Calendar, PlusCircle } from "lucide-react";
+import MapArea from "../components/MapArea";
 import {
-  simularVentanaDiaria,
   registrarPedidoManual,
+  simularVentanaDiaria,
 } from "../services/simulacionService";
-import type { Solucion } from "../types";
+import type { PedidoManualDTO, Solucion } from "../types";
 
-export default function SimulacionDiariaPage({ modoOscuro = true }: { modoOscuro?: boolean }) {
-  // ── ESTADOS DE TIEMPO Y UI ──
-  const [fecha, setFecha] = useState(
-    () => new Date().toISOString().split("T")[0],
-  );
+interface PedidoLocal extends PedidoManualDTO {
+  idPedido: string;
+  fechaRegistro: string;
+}
 
-  const [horaInicio, setHoraInicio] = useState(() => {
-    const now = new Date();
-    return `${now.getHours().toString().padStart(2, "0")}:${now.getMinutes().toString().padStart(2, "0")}`;
+const obtenerIsoLocal = (date: Date) => {
+  const pad = (value: number) => String(value).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(
+    date.getDate(),
+  )}T${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(
+    date.getSeconds(),
+  )}`;
+};
+
+const obtenerIsoFechaLocal = (date: Date) => {
+  const pad = (value: number) => String(value).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+};
+
+const formatearFecha = (date: Date) =>
+  date.toLocaleDateString("es-PE", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
   });
 
-  // Inicializamos el reloj virtual calculando los minutos de la hora actual
-  const [relojVirtual, setRelojVirtual] = useState(() => {
-    const now = new Date();
-    // Agregamos (now.getSeconds() / 60) para tener la fracción de minuto exacta
-    return now.getHours() * 60 + now.getMinutes() + now.getSeconds() / 60;
+const formatearHora = (date: Date) =>
+  date.toLocaleTimeString("es-PE", {
+    hour12: false,
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
   });
 
-  // Por defecto, la simulación arranca automáticamente al entrar a la página
+const parseHoraAMinutos = (hora: string) => {
+  const [h = "0", m = "0"] = hora.split(":");
+  return Number(h) * 60 + Number(m);
+};
+
+const clasificarTramo = (
+  horaSalida: string,
+  horaLlegada: string,
+  minutosHoy: number,
+) => {
+  const salida = parseHoraAMinutos(horaSalida);
+  let llegada = parseHoraAMinutos(horaLlegada);
+  if (llegada <= salida) llegada += 1440;
+  if (minutosHoy < salida) return "pendiente";
+  if (minutosHoy >= llegada) return "completado";
+  return "vuelo";
+};
+
+export default function SimulacionDiariaPage({
+  modoOscuro = true,
+}: {
+  modoOscuro?: boolean;
+}) {
+  const [fechaActual, setFechaActual] = useState<Date>(() => new Date());
   const [isPlaying, setIsPlaying] = useState(true);
   const [isProcessingWindow, setIsProcessingWindow] = useState(false);
-  const [velocidad, setVelocidad] = useState(1); // 1x por defecto
-
-  // ── ESTADOS DE DATOS ──
-  const [resultadoGlobal, setResultadoGlobal] = useState<Solucion | null>(null);
-  const windowSizeMinutes = 5; // Salto de consumo (Sc)
-
-  // ── ESTADOS DEL FORMULARIO MANUAL ──
+  const [resultadoBackend, setResultadoBackend] = useState<Solucion | null>(
+    null,
+  );
   const [showForm, setShowForm] = useState(false);
   const [formOrigen, setFormOrigen] = useState("SPIM");
   const [formDestino, setFormDestino] = useState("");
@@ -42,413 +77,500 @@ export default function SimulacionDiariaPage({ modoOscuro = true }: { modoOscuro
   const [formCliente, setFormCliente] = useState("0032535");
   const [formLoading, setFormLoading] = useState(false);
 
-  // Cálculos de fecha y hora exacta
-  const fechaBase = new Date(`${fecha}T00:00:00`);
-  const fechaVirtualActual = new Date(
-    fechaBase.getTime() + relojVirtual * 60 * 1000,
+  // 1. INICIALIZACIÓN Y PERSISTENCIA DE PEDIDOS CON LOCALSTORAGE
+  const [pedidosManuales, setPedidosManuales] = useState<PedidoLocal[]>(() => {
+    const saved = localStorage.getItem("tasf_pedidos_manuales");
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved) as PedidoLocal[];
+        // Limpieza de seguridad: borrar pedidos con más de 12 horas reales
+        const doceHorasMs = 12 * 60 * 60 * 1000;
+        const ahora = new Date().getTime();
+        return parsed.filter(
+          (p) => ahora - new Date(p.fechaRegistro).getTime() < doceHorasMs,
+        );
+      } catch (e) {
+        return [];
+      }
+    }
+    return [];
+  });
+
+  // Guardar automáticamente cada vez que la lista cambia
+  useEffect(() => {
+    localStorage.setItem(
+      "tasf_pedidos_manuales",
+      JSON.stringify(pedidosManuales),
+    );
+  }, [pedidosManuales]);
+
+  const ultimoBloqueSolicitado = useRef(-1);
+  const windowSizeMinutes = 1;
+
+  const minutosHoy = useMemo(
+    () => fechaActual.getHours() * 60 + fechaActual.getMinutes(),
+    [fechaActual],
   );
 
-  const fechaFormateada = fechaVirtualActual.toLocaleDateString("es-PE", {
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-  });
-  const horasStr = fechaVirtualActual.getHours().toString().padStart(2, "0");
-  const minutosStr = fechaVirtualActual
-    .getMinutes()
-    .toString()
-    .padStart(2, "0");
-  const segundosStr = fechaVirtualActual
-    .getSeconds()
-    .toString()
-    .padStart(2, "0");
+  const fechaHoy = useMemo(
+    () => obtenerIsoFechaLocal(fechaActual),
+    [fechaActual],
+  );
 
-  // Formato ISO local para mandar al backend (Ej: 2026-06-01T08:05:00)
-  const getIsoVirtualTime = () => {
-    const y = fechaVirtualActual.getFullYear();
-    const m = (fechaVirtualActual.getMonth() + 1).toString().padStart(2, "0");
-    const d = fechaVirtualActual.getDate().toString().padStart(2, "0");
-    return `${y}-${m}-${d}T${horasStr}:${minutosStr}:00`;
+  const procesarVentana = async (fechaHora: Date) => {
+    setIsProcessingWindow(true);
+    try {
+      const timestampAEnviar = obtenerIsoLocal(fechaHora);
+      const nuevaSolucion = await simularVentanaDiaria(
+        `${obtenerIsoFechaLocal(fechaHora)}T00:00:00`,
+        timestampAEnviar,
+        windowSizeMinutes,
+      );
+      setResultadoBackend(nuevaSolucion);
+    } catch (error) {
+      console.error("Error al traer nueva ventana:", error);
+    } finally {
+      setIsProcessingWindow(false);
+    }
   };
-
-  const getIsoStartTime = () => {
-    return `${fecha}T${horaInicio.padStart(5, "0")}:00`;
-  };
-
-  // ── EL BUCLE DE LA SIMULACIÓN ──
-  // Referencia para saber qué bloque ya pedimos y no repetir llamadas al backend
-  const ultimoBloqueSolicitado = useRef(-1);
-
-  // 1. RELOJ
-  const lastTickRef = useRef<number>(Date.now());
 
   useEffect(() => {
     if (!isPlaying) return;
-
-    // Sincronizamos el tiempo exacto al momento de darle Play o volver a la pestaña
-    lastTickRef.current = Date.now();
-
-    const interval = setInterval(() => {
-      const now = Date.now();
-      const deltaMs = now - lastTickRef.current; // Milisegundos reales transcurridos
-      lastTickRef.current = now;
-
-      setRelojVirtual((prev) => {
-        // Convertimos los milisegundos reales a minutos virtuales exactos
-        return prev + velocidad * (deltaMs / 60000);
-      });
-    }, 500);
-
+    const interval = setInterval(() => setFechaActual(new Date()), 1000);
     return () => clearInterval(interval);
-  }, [isPlaying, velocidad]);
-
-  // ── CATCH-UP: Saltar al tiempo real al reanudar la simulación ──
-  useEffect(() => {
-    if (isPlaying) {
-      const now = new Date();
-      setRelojVirtual(
-        now.getHours() * 60 + now.getMinutes() + now.getSeconds() / 60,
-      );
-    }
   }, [isPlaying]);
 
-  // 2. EL OBSERVADOR DE VENTANAS (Llama al backend solo cuando cruzamos un límite de 5 min)
   useEffect(() => {
     if (!isPlaying) return;
-
-    // Calculamos en qué bloque de 5 minutos estamos (Ej: minuto 12.4 -> bloque 2)
-    const bloqueActual = Math.floor(relojVirtual / windowSizeMinutes);
-
+    const bloqueActual = Math.floor(minutosHoy / windowSizeMinutes);
     if (bloqueActual > ultimoBloqueSolicitado.current) {
       ultimoBloqueSolicitado.current = bloqueActual;
-
-      const procesarVentana = async () => {
-        setIsProcessingWindow(true);
-        try {
-          const timestampAEnviar = getIsoVirtualTime();
-          const nuevaSolucion = await simularVentanaDiaria(
-            getIsoStartTime(),
-            timestampAEnviar,
-            windowSizeMinutes,
-          );
-
-          console.log("=== DATOS DEL BACKEND ===");
-          console.log("Ocupación Vuelos:", nuevaSolucion.ocupacionVuelos);
-          console.log("Rutas Asignadas:", nuevaSolucion.rutasAsignadas);
-
-          setResultadoGlobal((prev) => {
-            if (!prev) return nuevaSolucion;
-
-            // Limitamos el historial visual de rutas a 100 para no ahogar la RAM de React
-            const rutasCombinadas = {
-              ...prev.rutasAsignadas,
-              ...nuevaSolucion.rutasAsignadas,
-            };
-            const rutasAcotadas = Object.fromEntries(
-              Object.entries(rutasCombinadas).slice(-100),
-            );
-
-            return {
-              ...prev,
-              rutasAsignadas: rutasAcotadas, // <-- Tope de 100 rutas en memoria
-              ocupacionVuelos: nuevaSolucion.ocupacionVuelos,
-              ocupacionAeropuertos: nuevaSolucion.ocupacionAeropuertos,
-              capacidadesVuelos: {
-                ...prev.capacidadesVuelos,
-                ...nuevaSolucion.capacidadesVuelos,
-              },
-              totalPedidos:
-                nuevaSolucion.totalPedidos > 0
-                  ? nuevaSolucion.totalPedidos
-                  : prev.totalPedidos,
-            };
-          });
-        } catch (error) {
-          console.error("Error al traer nueva ventana:", error);
-        } finally {
-          setIsProcessingWindow(false);
-        }
-      };
-
-      procesarVentana();
+      procesarVentana(new Date());
     }
-  }, [relojVirtual, isPlaying]);
+  }, [minutosHoy, isPlaying]);
 
-  // ── REGISTRO MANUAL DE PEDIDOS ──
+  const solucionOperativa = useMemo(() => {
+    if (!resultadoBackend || pedidosManuales.length === 0) return null;
+
+    const manualIds = new Set(pedidosManuales.map((pedido) => pedido.idPedido));
+    const rutasAsignadas = Object.fromEntries(
+      Object.entries(resultadoBackend.rutasAsignadas ?? {}).filter(([id]) =>
+        manualIds.has(id),
+      ),
+    );
+
+    const prefijosVuelos = new Set<string>();
+    Object.values(rutasAsignadas)
+      .flat()
+      .forEach((ruta) => {
+        const prefijo = `${ruta.origen}-${ruta.destino}-${ruta.horaSalida.slice(0, 5)}`;
+        prefijosVuelos.add(prefijo);
+      });
+
+    const ocupacionVuelos = Object.fromEntries(
+      Object.entries(resultadoBackend.ocupacionVuelos ?? {}).filter(([key]) =>
+        Array.from(prefijosVuelos).some((prefijo) => key.startsWith(prefijo)),
+      ),
+    );
+
+    const capacidadesVuelos = Object.fromEntries(
+      Object.entries(resultadoBackend.capacidadesVuelos ?? {}).filter(([key]) =>
+        Array.from(prefijosVuelos).some((prefijo) => key.startsWith(prefijo)),
+      ),
+    );
+
+    const aeropuertosVisibles = new Set<string>();
+    Object.values(rutasAsignadas)
+      .flat()
+      .forEach((ruta) => {
+        aeropuertosVisibles.add(ruta.origen);
+        aeropuertosVisibles.add(ruta.destino);
+      });
+
+    const ocupacionAeropuertos = Object.fromEntries(
+      Object.entries(resultadoBackend.ocupacionAeropuertos ?? {}).filter(
+        ([key]) => aeropuertosVisibles.has(key.split("_")[0]),
+      ),
+    );
+
+    return {
+      ...resultadoBackend,
+      rutasAsignadas,
+      ocupacionVuelos,
+      capacidadesVuelos,
+      ocupacionAeropuertos,
+      detallesEnvios: Object.fromEntries(
+        Object.entries(resultadoBackend.detallesEnvios ?? {}).filter(([id]) =>
+          manualIds.has(id),
+        ),
+      ),
+      fechasTramos: Object.fromEntries(
+        Object.entries(resultadoBackend.fechasTramos ?? {}).filter(([id]) =>
+          manualIds.has(id),
+        ),
+      ),
+    } as Solucion;
+  }, [resultadoBackend, pedidosManuales]);
+
+  const pedidosConEstado = useMemo(() => {
+    const porEstado: Record<string, PedidoLocal[]> = {
+      procesando: [],
+      pendiente: [],
+      asignado: [],
+      "en-vuelo": [],
+      completado: [],
+      error: [],
+    };
+
+    pedidosManuales.forEach((pedido) => {
+      const rutas = solucionOperativa?.rutasAsignadas?.[pedido.idPedido] ?? [];
+      const tieneRuta = rutas.length > 0;
+      let estado = "pendiente";
+
+      if (!tieneRuta) {
+        estado = isProcessingWindow ? "procesando" : "pendiente";
+      } else {
+        const tramos = rutas.map((ruta) =>
+          clasificarTramo(ruta.horaSalida, ruta.horaLlegada, minutosHoy),
+        );
+
+        if (tramos.includes("vuelo")) {
+          estado = "en-vuelo";
+        } else if (tramos.every((valor) => valor === "completado")) {
+          estado = "completado";
+        } else {
+          estado = "asignado";
+        }
+      }
+
+      porEstado[estado] = [...porEstado[estado], pedido];
+    });
+
+    return porEstado;
+  }, [pedidosManuales, solucionOperativa, minutosHoy, isProcessingWindow]);
+
   const handleSubmitManual = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    if (formOrigen.length !== 4 || formDestino.length !== 4) {
+    const origen = formOrigen.trim().toUpperCase();
+    const destino = formDestino.trim().toUpperCase();
+
+    if (origen.length !== 4 || destino.length !== 4) {
       alert(
         "Los códigos de aeropuerto deben ser de exactamente 4 caracteres (Ej: SPIM).",
       );
       return;
     }
 
-    if (!formDestino || !formCantidad) return;
-    setFormLoading(true);
+    if (!destino || !formCantidad) return;
 
+    setFormLoading(true);
     try {
-      await registrarPedidoManual({
-        origen: formOrigen,
-        destino: formDestino,
+      const pedido = await registrarPedidoManual({
+        origen,
+        destino,
         cantidadMaletas: Number(formCantidad),
-        idCliente: formCliente,
-        fechaHoraVirtual: getIsoVirtualTime(), // Se ancla a la hora en pantalla
+        idCliente: formCliente.trim(),
+        fechaHoraVirtual: obtenerIsoLocal(fechaActual),
       });
-      alert(
-        `Pedido hacia ${formDestino} registrado. Se procesará en el siguiente salto del reloj.`,
-      );
+
+      setPedidosManuales((prev) => [
+        ...prev,
+        {
+          idPedido: pedido.idPedido,
+          origen,
+          destino,
+          cantidadMaletas: Number(formCantidad),
+          idCliente: formCliente.trim(),
+          fechaRegistro: pedido.fechaRegistro ?? obtenerIsoLocal(fechaActual),
+          fechaHoraVirtual:
+            pedido.fechaHoraVirtual ?? obtenerIsoLocal(fechaActual),
+        },
+      ]);
+
       setShowForm(false);
       setFormDestino("");
       setFormCantidad("");
+      setFormCliente(formCliente.trim());
+      procesarVentana(new Date());
     } catch (error: any) {
-      alert("Error al registrar pedido: " + error.message);
+      alert(
+        "Error al registrar pedido: " + (error?.message ?? "Error inesperado"),
+      );
     } finally {
       setFormLoading(false);
     }
   };
 
+  const totalPedidos = pedidosManuales.length;
+  const estadoActual = formLoading
+    ? "Guardando pedido..."
+    : isProcessingWindow
+      ? "Actualizando ventana..."
+      : "Último estado sincronizado";
+
   return (
-    <div className="flex-1 flex flex-col h-full relative font-sans">
-      {/* BARRA SUPERIOR */}
-      <div className="bg-white border-b border-slate-200 px-6 py-4 flex justify-between shadow-sm z-20">
+    // 3. CAMBIO DE CLASES RAÍZ: Se reemplaza h-screen por h-full flex-1 para evitar el desbordamiento
+    <div className="h-full flex-1 min-h-0 flex flex-col relative font-sans bg-slate-950">
+      // 2. CORRECCIÓN Z-INDEX: absolute/relative con z-[1000] para sobreponerse
+      al mapa
+      <div className="bg-slate-900 border-b border-slate-800 px-6 py-4 shadow-sm relative z-[1000]">
         <div className="flex items-center gap-3">
           <Calendar className="text-tasf-green" size={22} />
-          <h2 className="text-lg font-bold text-tasf-dark">
-            Monitoreo Día a Día
-          </h2>
+          <div>
+            <h2 className="text-lg font-bold text-white">
+              Operaciones Día a Día
+            </h2>
+            <p className="text-sm text-slate-400">
+              Registro en vivo de envíos manuales y monitoreo logístico.
+            </p>
+          </div>
         </div>
       </div>
+      <div className="flex-1 p-6 overflow-hidden min-h-0">
+        <div className="grid grid-cols-[1.5fr_0.9fr] gap-6 h-full min-h-0">
+          <section className="relative rounded-3xl overflow-hidden bg-slate-900 shadow-xl">
+            <div className="absolute top-4 left-20 z-20 w-[280px] rounded-2xl bg-slate-950/95 border border-slate-700 px-4 py-3 text-white shadow-lg">
+              <p className="text-[10px] uppercase tracking-widest text-slate-400 mb-1">
+                Hora real
+              </p>
+              <p className="font-mono text-xl font-bold text-white">
+                {formatearHora(fechaActual)}
+              </p>
+              <p className="text-[10px] text-slate-400 mt-1">
+                {formatearFecha(fechaActual)} • {estadoActual}
+              </p>
+            </div>
 
-      {/* ÁREA CENTRAL */}
-      <div className="flex-1 relative bg-slate-100">
-        {/* Usamos el módulo (%) 1440 para que al pasar la medianoche, el mapa vuelva a empezar desde 0 */}
-        <MapAreaDiario
-          solucion={resultadoGlobal}
-          horaVirtualMinutos={relojVirtual % 1440}
-          modoOscuro={modoOscuro}
-        />
+            <MapArea
+              solucion={solucionOperativa}
+              progreso={0}
+              modoOscuro={modoOscuro}
+              horaVirtualMinutos={minutosHoy}
+              minutosVirtualesTotales={minutosHoy}
+              fechaInicioSim={fechaHoy}
+            />
+          </section>
 
-        {/* BOTÓN REGISTRAR PEDIDO FLOTANTE */}
-        <div className="absolute top-6 right-6 z-[1000]">
-          <button
-            onClick={() => setShowForm(!showForm)}
-            className="flex items-center gap-2 bg-tasf-green text-white px-4 py-2 rounded-lg font-bold shadow-lg hover:bg-green-600 transition"
-          >
-            <PlusCircle size={18} /> Registrar Pedido Manual
-          </button>
-        </div>
-
-        {/* PANEL DE FORMULARIO MANUAL - Movido a la derecha */}
-        {showForm && (
-          <div className="absolute top-20 right-6 z-[1000] bg-white p-4 rounded-xl shadow-xl border border-slate-200 w-72">
-            <h3 className="font-bold text-tasf-dark text-sm mb-3">
-              Nuevo Envío
-            </h3>
-            <form onSubmit={handleSubmitManual} className="flex flex-col gap-2">
-              <input
-                value={formOrigen}
-                onChange={(e) => setFormOrigen(e.target.value)}
-                placeholder="Origen (Ej: LIM)"
-                className="border border-slate-300 p-2 rounded text-sm uppercase"
-                maxLength={4}
-                required
-              />
-              <input
-                value={formDestino}
-                onChange={(e) => setFormDestino(e.target.value)}
-                placeholder="Destino (Ej: MAD)"
-                className="border border-slate-300 p-2 rounded text-sm uppercase"
-                maxLength={4}
-                required
-              />
-              <input
-                type="number"
-                value={formCantidad}
-                onChange={(e) =>
-                  setFormCantidad(
-                    e.target.value === "" ? "" : Number(e.target.value),
-                  )
-                }
-                placeholder="N° Maletas"
-                className="border border-slate-300 p-2 rounded text-sm"
-                min={1}
-                required
-              />
-              <input
-                value={formCliente}
-                onChange={(e) => setFormCliente(e.target.value)}
-                placeholder="ID Cliente"
-                className="border border-slate-300 p-2 rounded text-sm"
-                required
-              />
-
-              <div className="flex gap-2 mt-2">
+          <aside className="flex flex-col gap-4 h-full min-h-0">
+            <div className="rounded-3xl bg-slate-900 shadow-xl border border-slate-700 p-4 text-white flex-none max-h-[220px] overflow-y-auto pr-2">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <p className="text-xs uppercase tracking-[0.2em] text-slate-400 font-semibold">
+                    Registro de pedidos
+                  </p>
+                  <h3 className="mt-2 text-2xl font-bold text-white">
+                    {totalPedidos} pedidos
+                  </h3>
+                </div>
                 <button
                   type="button"
-                  onClick={() => setShowForm(false)}
-                  className="flex-1 text-slate-500 text-sm font-semibold p-2"
+                  onClick={() => setShowForm((value) => !value)}
+                  className="inline-flex items-center gap-2 rounded-full bg-tasf-green px-3 py-2 text-sm font-semibold text-white shadow-md hover:bg-green-600 transition"
                 >
-                  Cancelar
-                </button>
-                <button
-                  type="submit"
-                  disabled={formLoading}
-                  className="flex-1 bg-tasf-dark text-white rounded font-semibold text-sm p-2"
-                >
-                  {formLoading ? "Guardando..." : "Guardar"}
+                  <PlusCircle size={16} /> Registrar
                 </button>
               </div>
-            </form>
-          </div>
-        )}
 
-        {/* PANEL DE TELEMETRÍA EN TIEMPO REAL */}
-        {resultadoGlobal && (
-          <div className="absolute top-24 left-6 z-[900] w-64 flex flex-col gap-3">
-            {/* Tarjeta: Estado de Aeropuertos */}
-            <div className="bg-tasf-dark/90 backdrop-blur text-white p-4 rounded-xl shadow-lg border border-slate-700">
-              <h3 className="text-[10px] uppercase font-bold text-slate-400 tracking-widest mb-2">
-                Almacenes Más Llenos
-              </h3>
-              <div className="space-y-2">
-                {Object.entries(resultadoGlobal.ocupacionAeropuertos || {})
-                  .sort(([, a], [, b]) => (b as number) - (a as number))
-                  .slice(0, 3)
-                  .map(([aero, cant]) => (
-                    <div
-                      key={aero}
-                      className="flex justify-between items-center text-xs"
+              {showForm ? (
+                <form onSubmit={handleSubmitManual} className="mt-3 space-y-2">
+                  <div className="grid grid-cols-2 gap-2">
+                    <input
+                      value={formOrigen}
+                      onChange={(e) =>
+                        setFormOrigen(e.target.value.toUpperCase())
+                      }
+                      placeholder="Origen"
+                      className="w-full rounded-xl border border-slate-700 bg-slate-950 px-2 py-2 text-sm uppercase text-white outline-none focus:border-tasf-green"
+                      maxLength={4}
+                      required
+                    />
+                    <input
+                      value={formDestino}
+                      onChange={(e) =>
+                        setFormDestino(e.target.value.toUpperCase())
+                      }
+                      placeholder="Destino"
+                      className="w-full rounded-xl border border-slate-700 bg-slate-950 px-2 py-2 text-sm uppercase text-white outline-none focus:border-tasf-green"
+                      maxLength={4}
+                      required
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <input
+                      type="number"
+                      value={formCantidad}
+                      onChange={(e) =>
+                        setFormCantidad(
+                          e.target.value === "" ? "" : Number(e.target.value),
+                        )
+                      }
+                      placeholder="N° maletas"
+                      min={1}
+                      className="w-full rounded-xl border border-slate-700 bg-slate-950 px-2 py-2 text-sm text-white outline-none focus:border-tasf-green"
+                      required
+                    />
+                    <input
+                      value={formCliente}
+                      onChange={(e) => setFormCliente(e.target.value)}
+                      placeholder="ID cliente"
+                      className="w-full rounded-xl border border-slate-700 bg-slate-950 px-2 py-2 text-sm text-white outline-none focus:border-tasf-green"
+                      required
+                    />
+                  </div>
+                  <div className="flex gap-2 mt-2">
+                    <button
+                      type="button"
+                      onClick={() => setShowForm(false)}
+                      className="flex-1 rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm font-semibold text-slate-200 hover:bg-slate-800"
                     >
-                      <span className="font-mono">{aero.split("_")[0]}</span>
-                      <span className="bg-slate-700 px-2 py-1 rounded text-tasf-amber font-bold">
-                        {cant} maletas
-                      </span>
+                      Cancelar
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={formLoading}
+                      className="flex-1 rounded-xl bg-tasf-dark px-3 py-2 text-sm font-semibold text-white hover:bg-slate-800 transition"
+                    >
+                      {formLoading ? "Guardando..." : "Enviar"}
+                    </button>
+                  </div>
+                </form>
+              ) : (
+                <div className="mt-3 rounded-2xl bg-slate-950 p-3 border border-slate-700">
+                  {pedidosManuales.length === 0 ? (
+                    <p className="text-sm text-slate-400">
+                      Registra el primer pedido manual.
+                    </p>
+                  ) : (
+                    <div className="text-sm text-slate-200 space-y-1">
+                      <div>
+                        <span className="font-semibold">Origen:</span>{" "}
+                        {pedidosManuales[pedidosManuales.length - 1].origen}
+                      </div>
+                      <div>
+                        <span className="font-semibold">Destino:</span>{" "}
+                        {pedidosManuales[pedidosManuales.length - 1].destino}
+                      </div>
+                      <div>
+                        <span className="font-semibold">Maletas:</span>{" "}
+                        {
+                          pedidosManuales[pedidosManuales.length - 1]
+                            .cantidadMaletas
+                        }
+                      </div>
                     </div>
-                  ))}
-              </div>
+                  )}
+                </div>
+              )}
             </div>
 
-            {/* Tarjeta: Vuelos Críticos */}
-            <div className="bg-tasf-dark/90 backdrop-blur text-white p-4 rounded-xl shadow-lg border border-slate-700">
-              <h3 className="text-[10px] uppercase font-bold text-slate-400 tracking-widest mb-2">
-                Vuelos con Mayor Carga
-              </h3>
-              <div className="space-y-2">
-                {Object.entries(resultadoGlobal.ocupacionVuelos || {})
-                  .sort(([, a], [, b]) => (b as number) - (a as number))
-                  .slice(0, 5) // <-- CAMBIADO A 5
-                  .map(([vuelo, cant]) => (
-                    <div
-                      key={vuelo}
-                      className="flex justify-between items-center text-xs"
-                    >
-                      <span
-                        className="font-mono truncate w-36"
-                        title={vuelo.split("_")[0]}
-                      >
-                        {vuelo.split("_")[0]}
-                      </span>
-                      <span className="bg-tasf-green/20 text-tasf-green px-2 py-1 rounded font-bold">
-                        {cant} un.
-                      </span>
-                    </div>
-                  ))}
-              </div>
-            </div>
-
-            {/* Tarjeta: Pedidos Procesados */}
-            {/* <div className="bg-tasf-dark/90 backdrop-blur text-white p-4 rounded-xl shadow-lg border border-slate-700">
-              <h3 className="text-[10px] uppercase font-bold text-slate-400 tracking-widest mb-1">
-                Volumen Procesado
-              </h3>
-              <div className="text-2xl font-bold text-white">
-                {resultadoGlobal.totalPedidos.toLocaleString()}{" "}
-                <span className="text-xs font-normal text-slate-400">
-                  pedidos
+            <div className="rounded-3xl bg-slate-900 shadow-xl border border-slate-700 p-5 flex flex-col flex-1 min-h-0 text-white">
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <p className="text-xs uppercase tracking-[0.2em] text-slate-400 font-semibold">
+                    Estado del flujo
+                  </p>
+                  <h3 className="mt-3 text-2xl font-bold text-white">
+                    {totalPedidos} registros
+                  </h3>
+                </div>
+                <span className="rounded-full bg-slate-800 px-3 py-1 text-xs font-semibold text-slate-300">
+                  {isProcessingWindow ? "Sincronizando" : "En vivo"}
                 </span>
               </div>
-            </div> */}
 
-            {/* Tarjeta: Últimos Pedidos Asignados */}
-            <div className="bg-tasf-dark/90 backdrop-blur text-white p-4 rounded-xl shadow-lg border border-slate-700">
-              <h3 className="text-[10px] uppercase font-bold text-slate-400 tracking-widest mb-2">
-                Rutas Asignadas (En Vivo)
-              </h3>
-              <div className="space-y-2 overflow-y-auto max-h-32 pr-1">
-                {!resultadoGlobal.rutasAsignadas ||
-                Object.keys(resultadoGlobal.rutasAsignadas).length === 0 ? (
-                  <p className="text-xs text-slate-500 italic">
-                    Esperando rutas...
-                  </p>
-                ) : (
-                  // Tomamos los últimos 5 pedidos registrados para mostrarlos arriba
-                  Object.keys(resultadoGlobal.rutasAsignadas)
-                    .slice(-5)
-                    .reverse()
-                    .map((id) => (
-                      <div
-                        key={id}
-                        className="flex justify-between items-center text-xs"
-                      >
-                        <span
-                          className="font-mono text-slate-300 truncate w-24"
-                          title={id}
-                        >
-                          {id}
-                        </span>
-                        <span className="bg-tasf-green/20 text-tasf-green px-2 py-1 rounded font-bold text-[10px]">
-                          EN RUTA
-                        </span>
+              <div className="mt-4 grid grid-cols-2 gap-3">
+                {[
+                  {
+                    label: "Procesando",
+                    value: pedidosConEstado.procesando.length,
+                  },
+                  {
+                    label: "Asignados",
+                    value: pedidosConEstado.asignado.length,
+                  },
+                  {
+                    label: "En vuelo",
+                    value: pedidosConEstado["en-vuelo"].length,
+                  },
+                  {
+                    label: "Completados",
+                    value: pedidosConEstado.completado.length,
+                  },
+                ].map((item) => (
+                  <div
+                    key={item.label}
+                    className="rounded-3xl border border-slate-700 bg-slate-950 p-3"
+                  >
+                    <p className="text-[11px] uppercase tracking-[0.2em] text-slate-400">
+                      {item.label}
+                    </p>
+                    <p className="mt-2 text-3xl font-bold text-white">
+                      {item.value}
+                    </p>
+                  </div>
+                ))}
+              </div>
+
+              <div className="mt-4 flex-1 min-h-0 overflow-y-auto space-y-2 pr-2">
+                {Object.entries(pedidosConEstado).map(([estado, pedidos]) => (
+                  <div
+                    key={estado}
+                    className="rounded-3xl bg-slate-950 border border-slate-700 p-3"
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <p className="text-xs uppercase tracking-[0.2em] text-slate-400 font-semibold">
+                        {estado === "en-vuelo"
+                          ? "En vuelo"
+                          : estado === "procesando"
+                            ? "Procesando"
+                            : estado === "pendiente"
+                              ? "Pendientes"
+                              : estado === "asignado"
+                                ? "Asignados"
+                                : estado === "completado"
+                                  ? "Completados"
+                                  : estado}
+                      </p>
+                      <span className="rounded-full bg-slate-800 px-2 py-1 text-[10px] font-semibold text-slate-300">
+                        {pedidos.length}
+                      </span>
+                    </div>
+                    {pedidos.length === 0 ? (
+                      <p className="mt-3 text-sm text-slate-400">Sin envíos</p>
+                    ) : (
+                      <div className="mt-3 space-y-2">
+                        {pedidos
+                          .slice(-3)
+                          .reverse()
+                          .map((pedido) => (
+                            <div
+                              key={pedido.idPedido}
+                              className="rounded-2xl bg-slate-900 border border-slate-700 p-3"
+                            >
+                              <div className="flex items-center justify-between gap-2">
+                                <span className="font-mono text-xs text-slate-400 truncate">
+                                  {pedido.idPedido}
+                                </span>
+                                <span className="text-[11px] font-semibold text-slate-300">
+                                  {pedido.cantidadMaletas} mal.
+                                </span>
+                              </div>
+                              <p className="mt-2 text-sm font-semibold text-white">
+                                {pedido.origen} → {pedido.destino}
+                              </p>
+                              <p className="mt-1 text-[11px] text-slate-400">
+                                Cliente {pedido.idCliente}
+                              </p>
+                            </div>
+                          ))}
                       </div>
-                    ))
-                )}
+                    )}
+                  </div>
+                ))}
               </div>
             </div>
-          </div>
-        )}
-
-        {/* REPRODUCTOR FLOTANTE INFERIOR */}
-        <div className="absolute bottom-10 left-1/2 transform -translate-x-1/2 z-[1000] bg-white shadow-2xl border border-slate-200 rounded-2xl px-8 py-4 flex items-center gap-8">
-          <div className="text-center">
-            <div className="text-[10px] uppercase font-bold text-tasf-green tracking-widest">
-              {fechaFormateada}
-            </div>
-            <div className="text-3xl font-mono font-bold text-tasf-dark">
-              {horasStr}:{minutosStr}:{segundosStr}
-            </div>
-          </div>
-          <div className="w-px h-12 bg-slate-200"></div>
-          <div className="flex items-center gap-4">
-            <button
-              onClick={() => setIsPlaying(!isPlaying)}
-              className={`p-4 rounded-full transition-transform shadow-md hover:scale-105 ${isPlaying ? "bg-tasf-amber text-white" : "bg-tasf-green text-white"}`}
-            >
-              {isPlaying ? (
-                <Pause size={24} fill="currentColor" />
-              ) : (
-                <Play size={24} fill="currentColor" />
-              )}
-            </button>
-            {isProcessingWindow && (
-              <Loader2 size={20} className="text-slate-400 animate-spin" />
-            )}
-            <div className="w-px h-12 bg-slate-200 mx-4"></div>
-            <div className="flex flex-col items-center min-w-[100px]">
-              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">
-                Velocidad: {velocidad}x
-              </span>
-              <input
-                type="range"
-                min="1"
-                max="60"
-                value={velocidad}
-                onChange={(e) => setVelocidad(Number(e.target.value))}
-                className="w-full accent-tasf-green cursor-pointer"
-              />
-            </div>
-          </div>
+          </aside>
         </div>
       </div>
     </div>

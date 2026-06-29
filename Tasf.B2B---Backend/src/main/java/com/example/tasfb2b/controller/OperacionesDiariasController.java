@@ -88,21 +88,28 @@ public class OperacionesDiariasController {
             @RequestParam(name = "ventanaMinutos", defaultValue = "5") int ventanaMinutos
     ) {
         LocalDateTime horaActualVirtual = LocalDateTime.parse(fechaHoraActualStr);
+
+        // 1. EL MARGEN DE SEGURIDAD RED (Retrocedemos 1 minuto)
+        LocalDateTime inicioVentanaNuevos = horaActualVirtual.minusMinutes(1);
         LocalDateTime finVentanaVirtual = horaActualVirtual.plusMinutes(ventanaMinutos);
         LocalDateTime inicioHistorial = horaActualVirtual.minusDays(3);
 
         List<Aeropuerto> aeropuertos = aeropuertoRepository.findAll();
         List<Vuelo> vuelos = vueloRepository.findAll();
 
+        // 2. QUERY HISTÓRICA: Solo jala pedidos pasados que sean MANUALES
         List<Pedido> pedidosDelPasadoSurgidosHoy = jdbc.query(
                 "SELECT id_pedido, origen, destino, fecha_registro, cantidad_maletas, id_cliente " +
-                        "FROM pedidos WHERE fecha_registro >= ? AND fecha_registro < ? ORDER BY fecha_registro",
-                PEDIDO_MAPPER, inicioHistorial, horaActualVirtual);
+                        "FROM pedidos WHERE fecha_registro >= ? AND fecha_registro < ? " +
+                        "AND id_pedido LIKE 'MANUAL-%' ORDER BY fecha_registro",
+                PEDIDO_MAPPER, inicioHistorial, inicioVentanaNuevos);
 
+        // 3. QUERY NUEVOS: Solo jala pedidos nuevos que sean MANUALES
         List<Pedido> pedidosNuevosVentana = jdbc.query(
                 "SELECT id_pedido, origen, destino, fecha_registro, cantidad_maletas, id_cliente " +
-                        "FROM pedidos WHERE fecha_registro >= ? AND fecha_registro < ? ORDER BY fecha_registro",
-                PEDIDO_MAPPER, horaActualVirtual, finVentanaVirtual);
+                        "FROM pedidos WHERE fecha_registro >= ? AND fecha_registro < ? " +
+                        "AND id_pedido LIKE 'MANUAL-%' ORDER BY fecha_registro",
+                PEDIDO_MAPPER, inicioVentanaNuevos, finVentanaVirtual);
 
         Solucion solucion;
 

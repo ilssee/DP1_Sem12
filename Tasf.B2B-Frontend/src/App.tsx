@@ -350,7 +350,12 @@ function DrawerAlmacenes({ resultado, minutosVirtualesTotales, fechaInicioSim, o
   const normH = (t: string) => { const p = (t ?? '').split(':'); return `${p[0].padStart(2,'0')}:${(p[1]??'00').padStart(2,'0')}:${(p[2]??'00').padStart(2,'0')}`; };
 
   const almacenes = useMemo<{ filas: any[] }>(() => {
-    if (!resultado) return [];
+    if (!resultado) {
+        return {
+            filas: [],
+            enviosPorAero: {},
+        };
+    }
     const ocupacionAero = resultado.ocupacionAeropuertos ?? {};
     const capacidadesAero = resultado.capacidadesAeropuertos ?? {};
     const detalles = resultado.detallesEnvios ?? {};
