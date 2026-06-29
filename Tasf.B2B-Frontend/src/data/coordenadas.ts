@@ -41,3 +41,19 @@ export const aeropuertosDB: Record<string, Coordenada> = {
   "UBBB": { lat: 40.4672, lng: 50.0467, nombre: "Bakú (Azerbaiyán)" },
   "OJAI": { lat: 31.7225, lng: 35.9933, nombre: "Amán (Jordania)" }
 };
+
+export const aeropuertoContinente: Record<string, string> = {
+  // América del Sur
+  "SKBO": "América del Sur", "SEQM": "América del Sur", "SVMI": "América del Sur",
+  "SBBR": "América del Sur", "SPIM": "América del Sur", "SLLP": "América del Sur",
+  "SCEL": "América del Sur", "SABE": "América del Sur", "SGAS": "América del Sur",
+  "SUAA": "América del Sur",
+  // Europa
+  "LATI": "Europa", "EDDI": "Europa", "LOWW": "Europa", "EBCI": "Europa",
+  "UMMS": "Europa", "LBSF": "Europa", "LKPR": "Europa", "LDZA": "Europa",
+  "EKCH": "Europa", "EHAM": "Europa",
+  // Asia
+  "VIDP": "Asia", "OSDI": "Asia", "OERK": "Asia", "OMDB": "Asia",
+  "OAKB": "Asia", "OOMS": "Asia", "OYSN": "Asia", "OPKC": "Asia",
+  "UBBB": "Asia", "OJAI": "Asia",
+};

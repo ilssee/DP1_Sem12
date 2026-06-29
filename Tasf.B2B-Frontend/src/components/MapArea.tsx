@@ -15,6 +15,8 @@ interface MapAreaProps {
   onVueloResaltadoClear?: () => void;
   aeropuertoResaltado?: string | null;
   ocupacionAeropuertosRT?: Record<string, number>;
+  onAeropuertoClick?: (codigo: string) => void;
+  onVueloClick?: (key: string) => void;
 }
 
 function EventosMapa({ alHacerClic }: { alHacerClic: () => void }) {
@@ -110,7 +112,7 @@ const calcularProgresoTotal = (
   return (minutosActuales - minSalida) / (minLlegada - minSalida);
 };
 
-export default function MapArea({ solucion, progreso, modoOscuro = true, horaVirtualMinutos = 0, minutosVirtualesTotales, fechaInicioSim = "2026-01-05", vueloResaltado, onVueloResaltadoClear, aeropuertoResaltado, ocupacionAeropuertosRT = {} }: MapAreaProps) {
+export default function MapArea({ solucion, progreso, modoOscuro = true, horaVirtualMinutos = 0, minutosVirtualesTotales, fechaInicioSim = "2026-01-05", vueloResaltado, onVueloResaltadoClear, aeropuertoResaltado, ocupacionAeropuertosRT = {}, onAeropuertoClick, onVueloClick }: MapAreaProps) {
   const [vueloSeleccionado, setVueloSeleccionado] = useState<string | null>(null);
   const [mostrarVacíos, setMostrarVacíos] = useState(false);
   const markerRefs = useRef<Map<string, L.Marker>>(new Map());
@@ -240,7 +242,7 @@ export default function MapArea({ solucion, progreso, modoOscuro = true, horaVir
           icon={getPlaneIcon(vuelo.color, isSelected, isDimmed, rumbo)}
           zIndexOffset={isSelected ? 1000 : 0}
           ref={(ref) => { if (ref) markerRefs.current.set(vuelo.id, ref); }}
-          eventHandlers={{ click: (e) => { L.DomEvent.stopPropagation(e); setVueloSeleccionado(isSelected ? null : vuelo.id); if (isSelected && onVueloResaltadoClear) onVueloResaltadoClear(); } }}
+          eventHandlers={{ click: (e) => { L.DomEvent.stopPropagation(e); setVueloSeleccionado(isSelected ? null : vuelo.id); if (isSelected && onVueloResaltadoClear) onVueloResaltadoClear(); else onVueloClick?.(vuelo.id); } }}
         >
           <Popup autoPan={false}>
             <div style={{ minWidth: 165 }}>
@@ -367,7 +369,8 @@ export default function MapArea({ solucion, progreso, modoOscuro = true, horaVir
         });
         return (
           <Marker key={`aero-${codigo}`} position={[coord.lat, coord.lng]} icon={pinDinamico}
-            ref={(ref) => { if (ref) aeroMarkerRefs.current.set(codigo, ref); else aeroMarkerRefs.current.delete(codigo); }}>
+            ref={(ref) => { if (ref) aeroMarkerRefs.current.set(codigo, ref); else aeroMarkerRefs.current.delete(codigo); }}
+            eventHandlers={{ click: () => onAeropuertoClick?.(codigo) }}>
             <Popup autoPan={false}>
               <div className="text-center min-w-[120px]">
                 <strong className="text-tasf-dark font-bold">{codigo}</strong><br />

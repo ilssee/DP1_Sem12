@@ -8,6 +8,7 @@ import {
   Calendar,
 } from "lucide-react";
 import MapArea from "./components/MapArea";
+import { aeropuertosDB, aeropuertoContinente } from "./data/coordenadas";
 import {
   iniciarSimulacionPeriodo,
   obtenerEstadoSimulacion,
@@ -132,14 +133,97 @@ function WidgetTiempos({ horaRealActual, tiempoTranscurrido, tiempoSimuladoTrans
   );
 }
 
-function DrawerVuelos({ resultado, minutosVirtualesTotales, fechaInicio, onSeleccionar, onCerrar }: {
+function AeroSelect({ value, onChange, opciones, placeholder }: {
+  value: string; onChange: (v: string) => void; opciones: string[]; placeholder: string;
+}) {
+  const [abierto, setAbierto] = useState(false);
+  const [busqueda, setBusqueda] = useState('');
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setAbierto(false); };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  const filtradas = opciones.filter(cod =>
+    cod.toLowerCase().includes(busqueda.toLowerCase()) ||
+    (aeropuertosDB[cod]?.nombre ?? '').toLowerCase().includes(busqueda.toLowerCase())
+  );
+
+  const nombre = value ? aeropuertosDB[value]?.nombre : null;
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        onClick={() => { setAbierto(v => !v); setBusqueda(''); }}
+        className={`w-full text-left bg-slate-700 hover:bg-slate-600 rounded px-2 py-1.5 text-[11px] flex items-center justify-between gap-1 transition-colors ${abierto ? 'ring-1 ring-tasf-green' : ''}`}
+      >
+        <span className="truncate">
+          {value ? (
+            <><span className="font-bold text-white">{value}</span>
+            {nombre && <span className="text-slate-400 ml-1">{nombre}</span>}</>
+          ) : <span className="text-slate-500">{placeholder}</span>}
+        </span>
+        <span className="text-slate-400 shrink-0">{abierto ? '▲' : '▼'}</span>
+      </button>
+      {abierto && (
+        <div className="absolute top-full left-0 right-0 z-50 mt-1 bg-slate-800 border border-slate-600 rounded-lg shadow-xl overflow-hidden">
+          <div className="p-1.5 border-b border-slate-700">
+            <input
+              autoFocus
+              value={busqueda}
+              onChange={e => setBusqueda(e.target.value)}
+              placeholder="Buscar..."
+              className="w-full bg-slate-700 text-white text-[11px] rounded px-2 py-1 outline-none placeholder-slate-500"
+            />
+          </div>
+          <div className="max-h-48 overflow-y-auto">
+            <button
+              onClick={() => { onChange(''); setAbierto(false); }}
+              className={`w-full text-left px-3 py-2 text-[11px] hover:bg-slate-700 transition-colors ${!value ? 'bg-tasf-green/10 text-tasf-green' : 'text-slate-400'}`}
+            >
+              Todos
+            </button>
+            {filtradas.map(cod => (
+              <button
+                key={cod}
+                onClick={() => { onChange(cod); setAbierto(false); }}
+                className={`w-full text-left px-3 py-2 text-[11px] hover:bg-slate-700 transition-colors flex items-center gap-2 ${value === cod ? 'bg-tasf-green/10' : ''}`}
+              >
+                <span className={`font-bold font-mono w-10 shrink-0 ${value === cod ? 'text-tasf-green' : 'text-white'}`}>{cod}</span>
+                <span className="text-slate-400 truncate">{aeropuertosDB[cod]?.nombre ?? ''}</span>
+              </button>
+            ))}
+            {filtradas.length === 0 && <p className="text-slate-500 text-[11px] px-3 py-2 italic">Sin resultados</p>}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DrawerVuelos({ resultado, minutosVirtualesTotales, fechaInicio, onSeleccionar, onCerrar, vueloExpandir }: {
   resultado: any; minutosVirtualesTotales: number; fechaInicio: string;
   onSeleccionar: (key: string) => void; onCerrar: () => void;
+  vueloExpandir?: string | null;
 }) {
   const [orden, setOrden] = useState<{ col: 'cant'|'envios'|'minSalida'|'minLlegada'|'origen'|'destino'; dir: 1|-1 }>({ col: 'minSalida', dir: 1 });
   const [filtrosAbiertos, setFiltrosAbiertos] = useState(false);
   const [filtroOrigen, setFiltroOrigen] = useState('');
   const [filtroDestino, setFiltroDestino] = useState('');
+  const filaRefs = useRef<Map<string, HTMLTableRowElement>>(new Map());
+
+  useEffect(() => {
+    if (!vueloExpandir) return;
+    setExpandido(vueloExpandir);
+    setFiltroOrigen('');
+    setFiltroDestino('');
+    setTimeout(() => {
+      const row = filaRefs.current.get(vueloExpandir);
+      row?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }, 100);
+  }, [vueloExpandir]);
 
   const normH = (t: string) => { const p = (t??"").split(":"); return `${p[0].padStart(2,"0")}:${(p[1]??"00").padStart(2,"0")}:${(p[2]??"00").padStart(2,"0")}`; };
 
@@ -237,19 +321,25 @@ function DrawerVuelos({ resultado, minutosVirtualesTotales, fechaInicio, onSelec
         </div>
       </div>
       {/* Panel de filtros desplegable */}
-      <div className={`overflow-hidden transition-all duration-200 border-b border-slate-700 bg-slate-900 ${filtrosAbiertos ? 'max-h-20' : 'max-h-0'}`}>
+      {filtrosAbiertos && <div className="border-b border-slate-700 bg-slate-900">
         <div className="flex gap-2 px-4 py-2">
           <div className="flex-1">
             <label className="text-[9px] text-slate-500 uppercase tracking-wider block mb-1">Origen</label>
-            <input value={filtroOrigen} onChange={e => setFiltroOrigen(e.target.value)}
-              placeholder="Ej: SPIM"
-              className="w-full bg-slate-700 text-white text-[11px] rounded px-2 py-1 placeholder-slate-500 outline-none focus:ring-1 focus:ring-tasf-green" />
+            <AeroSelect
+              value={filtroOrigen}
+              onChange={setFiltroOrigen}
+              opciones={[...new Set(vuelosActivos.map((v: any) => v.origen))].sort() as string[]}
+              placeholder="Todos los orígenes"
+            />
           </div>
           <div className="flex-1">
             <label className="text-[9px] text-slate-500 uppercase tracking-wider block mb-1">Destino</label>
-            <input value={filtroDestino} onChange={e => setFiltroDestino(e.target.value)}
-              placeholder="Ej: OAKB"
-              className="w-full bg-slate-700 text-white text-[11px] rounded px-2 py-1 placeholder-slate-500 outline-none focus:ring-1 focus:ring-tasf-green" />
+            <AeroSelect
+              value={filtroDestino}
+              onChange={setFiltroDestino}
+              opciones={[...new Set(vuelosActivos.map((v: any) => v.destino))].sort() as string[]}
+              placeholder="Todos los destinos"
+            />
           </div>
           {(filtroOrigen || filtroDestino) && (
             <button onClick={() => { setFiltroOrigen(''); setFiltroDestino(''); }}
@@ -258,7 +348,7 @@ function DrawerVuelos({ resultado, minutosVirtualesTotales, fechaInicio, onSelec
             </button>
           )}
         </div>
-      </div>
+      </div>}
       <div className="px-3 py-1 border-b border-slate-700 shrink-0">
         <p className="text-[9px] text-slate-500 italic">👆 Haz clic en una fila para ver los envíos consolidados</p>
       </div>
@@ -284,6 +374,7 @@ function DrawerVuelos({ resultado, minutosVirtualesTotales, fechaInicio, onSelec
               return (
                 <React.Fragment key={v.key}>
                   <tr
+                    ref={(el) => { if (el) filaRefs.current.set(v.key, el); else filaRefs.current.delete(v.key); }}
                     onClick={() => { setExpandido(abierto ? null : v.key); onSeleccionar(v.key); }}
                     className={`border-b border-slate-800 cursor-pointer transition-colors ${abierto ? 'bg-slate-800' : 'hover:bg-slate-800/60'}`}>
                     <td className="px-3 py-2 text-slate-400 text-center">{abierto ? '▼' : '▶'}</td>
@@ -350,14 +441,29 @@ function DrawerVuelos({ resultado, minutosVirtualesTotales, fechaInicio, onSelec
   );
 }
 
-function DrawerAlmacenes({ resultado, minutosVirtualesTotales, fechaInicioSim, onCerrar, onSeleccionarAeropuerto, ocupacionAeropuertosRT }: {
+function DrawerAlmacenes({ resultado, minutosVirtualesTotales, fechaInicioSim, onCerrar, onSeleccionarAeropuerto, ocupacionAeropuertosRT, aeropuertoExpandir }: {
   resultado: any; minutosVirtualesTotales: number; fechaInicioSim: string; onCerrar: () => void;
   onSeleccionarAeropuerto: (codigo: string) => void;
   ocupacionAeropuertosRT: Record<string, number>;
+  aeropuertoExpandir?: string | null;
 }) {
   type Col = 'codigo'|'ocupacion'|'capacidad'|'pct'|'enviosEnAlmacen'|'maletasEnAlmacen'|'enviosEnCamino'|'maletasEnCamino';
   const [orden, setOrden] = useState<{ col: Col; dir: 1|-1 }>({ col: 'pct', dir: -1 });
   const [expandido, setExpandido] = useState<string | null>(null);
+  const [filtroContinente, setFiltroContinente] = useState('');
+  const [filtroAeropuerto, setFiltroAeropuerto] = useState('');
+  const filaRefs = useRef<Map<string, HTMLTableRowElement>>(new Map());
+
+  useEffect(() => {
+    if (!aeropuertoExpandir) return;
+    setExpandido(aeropuertoExpandir);
+    setFiltroContinente('');
+    setFiltroAeropuerto('');
+    setTimeout(() => {
+      const row = filaRefs.current.get(aeropuertoExpandir);
+      row?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }, 100);
+  }, [aeropuertoExpandir]);
 
   const normH = (t: string) => { const p = (t ?? '').split(':'); return `${p[0].padStart(2,'0')}:${(p[1]??'00').padStart(2,'0')}:${(p[2]??'00').padStart(2,'0')}`; };
 
@@ -451,11 +557,14 @@ function DrawerAlmacenes({ resultado, minutosVirtualesTotales, fechaInicioSim, o
   }, [resultado, minutosVirtualesTotales, fechaInicioSim]);
 
   const ordenados = useMemo(() => {
-    return [...almacenes.filas].sort((a, b) => {
+    let filas = [...almacenes.filas];
+    if (filtroContinente) filas = filas.filter(a => (aeropuertoContinente[a.codigo] ?? '') === filtroContinente);
+    if (filtroAeropuerto) filas = filas.filter(a => a.codigo === filtroAeropuerto);
+    return filas.sort((a, b) => {
       if (orden.col === 'codigo') return a.codigo.localeCompare(b.codigo) * orden.dir;
       return ((a[orden.col] as number) - (b[orden.col] as number)) * orden.dir;
     });
-  }, [almacenes, orden]);
+  }, [almacenes, orden, filtroContinente, filtroAeropuerto]);
 
   const thC = (col: Col) =>
     `px-3 py-2 text-left cursor-pointer select-none hover:text-white transition-colors whitespace-nowrap ${orden.col === col ? 'text-tasf-green' : 'text-slate-400'}`;
@@ -471,8 +580,35 @@ function DrawerAlmacenes({ resultado, minutosVirtualesTotales, fechaInicioSim, o
   return (
     <>
       <div className="px-4 py-3 border-b border-slate-700 flex items-center justify-between shrink-0">
-        <h3 className="text-white font-bold text-sm">🏭 Almacenes ({almacenes.filas.length})</h3>
-        <button onClick={onCerrar} className="text-slate-400 hover:text-white text-lg leading-none">✕</button>
+        <h3 className="text-white font-bold text-sm">🏭 Almacenes ({ordenados.length}{filtroContinente ? `/${almacenes.filas.length}` : ''})</h3>
+        <div className="flex items-center gap-2">
+          <select
+            value={filtroContinente}
+            onChange={e => { setFiltroContinente(e.target.value); setFiltroAeropuerto(''); setExpandido(null); }}
+            className="bg-slate-700 text-white text-[11px] rounded px-2 py-1 outline-none border border-slate-600 focus:border-tasf-green cursor-pointer"
+          >
+            <option value="">Todos los continentes</option>
+            <option value="América del Sur">América del Sur</option>
+            <option value="Europa">Europa</option>
+            <option value="Asia">Asia</option>
+          </select>
+          <div className="w-44">
+            <AeroSelect
+              value={filtroAeropuerto}
+              onChange={v => { setFiltroAeropuerto(v); setExpandido(null); }}
+              opciones={almacenes.filas
+                .filter(a => !filtroContinente || (aeropuertoContinente[a.codigo] ?? '') === filtroContinente)
+                .map(a => a.codigo)
+                .sort()}
+              placeholder="Todos los aeropuertos"
+            />
+          </div>
+          {(filtroContinente || filtroAeropuerto) && (
+            <button onClick={() => { setFiltroContinente(''); setFiltroAeropuerto(''); setExpandido(null); }}
+              className="text-[10px] text-slate-400 hover:text-white px-2 py-1 rounded bg-slate-700 hover:bg-slate-600 transition-colors">✕</button>
+          )}
+          <button onClick={onCerrar} className="text-slate-400 hover:text-white text-lg leading-none">✕</button>
+        </div>
       </div>
       <div className="px-3 py-1.5 border-b border-slate-700 shrink-0">
         <p className="text-[9px] text-slate-500 italic">👆 Haz clic en una fila para ver envíos y navegar al aeropuerto en el mapa</p>
@@ -499,6 +635,7 @@ function DrawerAlmacenes({ resultado, minutosVirtualesTotales, fechaInicioSim, o
               return (
                 <React.Fragment key={a.codigo}>
                   <tr
+                    ref={(el) => { if (el) filaRefs.current.set(a.codigo, el); else filaRefs.current.delete(a.codigo); }}
                     onClick={() => { setExpandido(abierto ? null : a.codigo); onSeleccionarAeropuerto(a.codigo); }}
                     className={`border-b border-slate-800 cursor-pointer transition-colors ${abierto ? 'bg-slate-800' : 'hover:bg-slate-800/60'}`}>
                     <td className="px-2 py-2 text-slate-400 text-center">{abierto ? '▼' : '▶'}</td>
@@ -593,8 +730,12 @@ function DrawerAlmacenes({ resultado, minutosVirtualesTotales, fechaInicioSim, o
   );
 }
 
-function DrawerEnvios({ resultado, minutosVirtualesTotales, fechaInicioSim, onCerrar }: {
+function DrawerEnvios({ resultado, minutosVirtualesTotales, fechaInicioSim, onCerrar, onVerVuelo, onVerAlmacen, onEnfocarVuelo, onEnfocarAlmacen }: {
   resultado: any; minutosVirtualesTotales: number; fechaInicioSim: string; onCerrar: () => void;
+  onVerVuelo?: (key: string) => void;
+  onVerAlmacen?: (codigo: string) => void;
+  onEnfocarVuelo?: (key: string) => void;
+  onEnfocarAlmacen?: (codigo: string) => void;
 }) {
   type Col = 'id'|'idCliente'|'vuelo'|'maletas'|'origen'|'destino';
   type Tab = 'vuelo'|'espera'|'completado';
@@ -628,6 +769,8 @@ function DrawerEnvios({ resultado, minutosVirtualesTotales, fechaInicioSim, onCe
     datosBase.forEach(({ tramos, fechas, ...item }) => {
       let estado: Tab = 'espera';
       let minLlegadaFinal = 0;
+      let vueloKey: string | null = null;
+      let aeropuerto: string | null = null;
       if (tramos.length > 0) {
         let hayVuelo = false, todosCompletos = true;
         for (let i = 0; i < tramos.length; i++) {
@@ -637,12 +780,20 @@ function DrawerEnvios({ resultado, minutosVirtualesTotales, fechaInicioSim, onCe
           const e = clasificarVuelo(fechaSalida, normH(v.horaSalida), normH(v.horaLlegada), fechaInicioSim, minutosVirtualesTotales);
           const mLleg = minLlegadaDesdeInicio(fechaSalida, normH(v.horaSalida??''), normH(v.horaLlegada??''), fechaInicioSim);
           if (mLleg > minLlegadaFinal) minLlegadaFinal = mLleg;
-          if (e === 'vuelo') { hayVuelo = true; todosCompletos = false; break; }
-          if (e === 'espera') todosCompletos = false;
+          if (e === 'vuelo') {
+            hayVuelo = true; todosCompletos = false;
+            vueloKey = `${v.origen}-${v.destino}-${normH(v.horaSalida??'')}_${fechaSalida}`;
+            break;
+          }
+          if (e === 'espera') {
+            todosCompletos = false;
+            if (!aeropuerto) aeropuerto = v.origen;
+          }
         }
+        if (!hayVuelo && todosCompletos) aeropuerto = tramos[tramos.length - 1]?.destino ?? null;
         estado = hayVuelo ? 'vuelo' : todosCompletos ? 'completado' : 'espera';
       }
-      result[estado].push({ ...item, minLlegadaFinal });
+      result[estado].push({ ...item, minLlegadaFinal, vueloKey, aeropuerto });
     });
     return result;
   }, [datosBase, minutosVirtualesTotales, fechaInicioSim]);
@@ -698,24 +849,32 @@ function DrawerEnvios({ resultado, minutosVirtualesTotales, fechaInicioSim, onCe
       </div>
 
       {/* Filtros desplegables */}
-      <div className={`overflow-hidden transition-all duration-200 border-b border-slate-700 bg-slate-900 ${filtrosAbiertos ? 'max-h-20' : 'max-h-0'}`}>
+      {filtrosAbiertos && <div className="border-b border-slate-700 bg-slate-900">
         <div className="flex gap-2 px-4 pt-2 pb-2">
           <div className="flex-1">
             <label className="text-[9px] text-slate-500 uppercase tracking-wider block mb-1">Origen</label>
-            <input value={filtroOrigen} onChange={e => setFiltroOrigen(e.target.value)} placeholder="Ej: SPIM"
-              className="w-full bg-slate-700 text-white text-[11px] rounded px-2 py-1 placeholder-slate-500 outline-none focus:ring-1 focus:ring-tasf-green" />
+            <AeroSelect
+              value={filtroOrigen}
+              onChange={setFiltroOrigen}
+              opciones={[...new Set(Object.values(resultado?.detallesEnvios ?? {}).map((d: any) => d.origen))].sort() as string[]}
+              placeholder="Todos los orígenes"
+            />
           </div>
           <div className="flex-1">
             <label className="text-[9px] text-slate-500 uppercase tracking-wider block mb-1">Destino</label>
-            <input value={filtroDestino} onChange={e => setFiltroDestino(e.target.value)} placeholder="Ej: OAKB"
-              className="w-full bg-slate-700 text-white text-[11px] rounded px-2 py-1 placeholder-slate-500 outline-none focus:ring-1 focus:ring-tasf-green" />
+            <AeroSelect
+              value={filtroDestino}
+              onChange={setFiltroDestino}
+              opciones={[...new Set(Object.values(resultado?.detallesEnvios ?? {}).map((d: any) => d.destino))].sort() as string[]}
+              placeholder="Todos los destinos"
+            />
           </div>
           {hayFiltros && (
             <button onClick={() => { setFiltroOrigen(''); setFiltroDestino(''); }}
               className="self-end text-[10px] text-slate-400 hover:text-white px-2 py-1 rounded bg-slate-700 hover:bg-slate-600 transition-colors mb-0.5">✕</button>
           )}
         </div>
-      </div>
+      </div>}
 
       {/* Tabs */}
       <div className="flex border-b border-slate-700 shrink-0">
@@ -762,11 +921,12 @@ function DrawerEnvios({ resultado, minutosVirtualesTotales, fechaInicioSim, onCe
               <th className={thC('maletas')} onClick={() => tog('maletas')}>Maletas{ind('maletas')}</th>
               <th className={thC('origen')} onClick={() => tog('origen')}>Origen{ind('origen')}</th>
               <th className={thC('destino')} onClick={() => tog('destino')}>Destino{ind('destino')}</th>
+              <th className="px-2 py-2 text-slate-400 w-6"></th>
             </tr>
           </thead>
           <tbody>
             {filasFiltradas.length === 0 ? (
-              <tr><td colSpan={6} className="text-center text-slate-500 py-8 italic">Sin envíos</td></tr>
+              <tr><td colSpan={7} className="text-center text-slate-500 py-8 italic">Sin envíos</td></tr>
             ) : filasFiltradas.map(e => (
               <tr key={e.id} className="border-b border-slate-800 hover:bg-slate-800 transition-colors">
                 <td className="px-2 py-2 font-mono text-[10px] text-slate-200">{e.id}</td>
@@ -777,6 +937,46 @@ function DrawerEnvios({ resultado, minutosVirtualesTotales, fechaInicioSim, onCe
                 </td>
                 <td className="px-2 py-2 font-bold">{e.origen}</td>
                 <td className="px-2 py-2 font-bold">{e.destino}</td>
+                <td className="px-2 py-2 text-center">
+                  <div className="flex items-center gap-1 justify-center">
+                    {tab === 'vuelo' && e.vueloKey && (
+                      <>
+                        {onEnfocarVuelo && (
+                          <button onClick={() => onEnfocarVuelo(e.vueloKey)}
+                            title="Enfocar en mapa"
+                            className="text-slate-300 hover:text-white text-[11px] px-1.5 py-0.5 rounded bg-slate-700 hover:bg-slate-600 transition-colors">
+                            📍
+                          </button>
+                        )}
+                        {onVerVuelo && (
+                          <button onClick={() => onVerVuelo(e.vueloKey)}
+                            title="Ver en panel de vuelos"
+                            className="text-tasf-green hover:text-green-400 text-[11px] px-1.5 py-0.5 rounded bg-tasf-green/10 hover:bg-tasf-green/20 transition-colors">
+                            ✈
+                          </button>
+                        )}
+                      </>
+                    )}
+                    {(tab === 'espera' || tab === 'completado') && e.aeropuerto && (
+                      <>
+                        {onEnfocarAlmacen && (
+                          <button onClick={() => onEnfocarAlmacen(e.aeropuerto)}
+                            title="Enfocar en mapa"
+                            className="text-slate-300 hover:text-white text-[11px] px-1.5 py-0.5 rounded bg-slate-700 hover:bg-slate-600 transition-colors">
+                            📍
+                          </button>
+                        )}
+                        {onVerAlmacen && (
+                          <button onClick={() => onVerAlmacen(e.aeropuerto)}
+                            title="Ver en panel de almacenes"
+                            className="text-blue-400 hover:text-blue-300 text-[11px] px-1.5 py-0.5 rounded bg-blue-400/10 hover:bg-blue-400/20 transition-colors">
+                            🏭
+                          </button>
+                        )}
+                      </>
+                    )}
+                  </div>
+                </td>
               </tr>
             ))}
           </tbody>
@@ -1498,6 +1698,29 @@ function App() {
           </aside>
 
           <main className="flex-1 flex flex-col relative z-10 overflow-hidden">
+            {/* Barra superior de paneles */}
+            {resultado && (
+              <div className="bg-slate-900 border-b border-slate-700 px-3 py-1.5 flex gap-2 shrink-0 z-[1000]">
+                <button
+                  onClick={() => { setPanelAlmacenesAbierto(v => !v); setPanelEnviosAbierto(false); setPanelVuelosAbierto(false); }}
+                  className={`text-xs font-bold px-3 py-1.5 rounded-lg border flex items-center gap-2 transition-colors ${panelAlmacenesAbierto ? 'bg-slate-700 border-slate-500 text-white' : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-600'}`}
+                >
+                  🏭 Almacenes {panelAlmacenesAbierto ? '▶' : '◀'}
+                </button>
+                <button
+                  onClick={() => { setPanelEnviosAbierto(v => !v); setPanelVuelosAbierto(false); setPanelAlmacenesAbierto(false); }}
+                  className={`text-xs font-bold px-3 py-1.5 rounded-lg border flex items-center gap-2 transition-colors ${panelEnviosAbierto ? 'bg-slate-700 border-slate-500 text-white' : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-600'}`}
+                >
+                  📦 Envíos {panelEnviosAbierto ? '▶' : '◀'}
+                </button>
+                <button
+                  onClick={() => { setPanelVuelosAbierto(v => !v); setPanelEnviosAbierto(false); setPanelAlmacenesAbierto(false); }}
+                  className={`text-xs font-bold px-3 py-1.5 rounded-lg border flex items-center gap-2 transition-colors ${panelVuelosAbierto ? 'bg-slate-700 border-slate-500 text-white' : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-600'}`}
+                >
+                  ✈ Vuelos activos {panelVuelosAbierto ? '▶' : '◀'}
+                </button>
+              </div>
+            )}
             <div className="flex-1 bg-slate-200 relative">
               {/* Widget flotante de tiempos */}
               {simulandoEnVivo && (
@@ -1509,7 +1732,8 @@ function App() {
                   horaInicio={horaInicio}
                 />
               )}
-              <MapArea solucion={resultado} progreso={porcentajeSimulacion} modoOscuro={modoOscuro} horaVirtualMinutos={horaVirtualMinutos} minutosVirtualesTotales={minutosVirtualesTotales} fechaInicioSim={fechaInicio} vueloResaltado={vueloResaltado} onVueloResaltadoClear={() => setVueloResaltado(null)} aeropuertoResaltado={aeropuertoResaltado} ocupacionAeropuertosRT={ocupacionAeropuertosRT} />
+              <MapArea solucion={resultado} progreso={porcentajeSimulacion} modoOscuro={modoOscuro} horaVirtualMinutos={horaVirtualMinutos} minutosVirtualesTotales={minutosVirtualesTotales} fechaInicioSim={fechaInicio} vueloResaltado={vueloResaltado} onVueloResaltadoClear={() => setVueloResaltado(null)} aeropuertoResaltado={aeropuertoResaltado} ocupacionAeropuertosRT={ocupacionAeropuertosRT} onAeropuertoClick={(cod) => { setAeropuertoResaltado(cod); setPanelAlmacenesAbierto(true); setPanelEnviosAbierto(false); setPanelVuelosAbierto(false); }}
+                onVueloClick={(key) => { setVueloResaltado(key); setPanelVuelosAbierto(true); setPanelEnviosAbierto(false); setPanelAlmacenesAbierto(false); }} />
 
               {/* Overlay procesando primer bloque */}
               {procesandoPrimerBloque && (
@@ -1523,29 +1747,6 @@ function App() {
                 </div>
               )}
 
-              {/* Botones flotantes */}
-              {resultado && (
-                <div className="absolute top-3 right-3 z-[1000] flex gap-2">
-                  <button
-                    onClick={() => { setPanelAlmacenesAbierto(v => !v); setPanelEnviosAbierto(false); setPanelVuelosAbierto(false); }}
-                    className="bg-slate-900 hover:bg-slate-700 text-white text-xs font-bold px-3 py-2 rounded-lg shadow-lg border border-slate-600 flex items-center gap-2 transition-colors"
-                  >
-                    🏭 Almacenes {panelAlmacenesAbierto ? '▶' : '◀'}
-                  </button>
-                  <button
-                    onClick={() => { setPanelEnviosAbierto(v => !v); setPanelVuelosAbierto(false); setPanelAlmacenesAbierto(false); }}
-                    className="bg-slate-900 hover:bg-slate-700 text-white text-xs font-bold px-3 py-2 rounded-lg shadow-lg border border-slate-600 flex items-center gap-2 transition-colors"
-                  >
-                    📦 Envíos {panelEnviosAbierto ? '▶' : '◀'}
-                  </button>
-                  <button
-                    onClick={() => { setPanelVuelosAbierto(v => !v); setPanelEnviosAbierto(false); setPanelAlmacenesAbierto(false); }}
-                    className="bg-slate-900 hover:bg-slate-700 text-white text-xs font-bold px-3 py-2 rounded-lg shadow-lg border border-slate-600 flex items-center gap-2 transition-colors"
-                  >
-                    ✈ Vuelos activos {panelVuelosAbierto ? '▶' : '◀'}
-                  </button>
-                </div>
-              )}
 
               {/* Drawer lateral de almacenes */}
               <div className={`absolute top-0 right-0 h-full z-[999] bg-slate-900 border-l border-slate-700 shadow-2xl flex flex-col transition-all duration-300 ${panelAlmacenesAbierto ? 'w-[780px]' : 'w-0 overflow-hidden'}`}>
@@ -1557,6 +1758,7 @@ function App() {
                     onCerrar={() => setPanelAlmacenesAbierto(false)}
                     onSeleccionarAeropuerto={setAeropuertoResaltado}
                     ocupacionAeropuertosRT={ocupacionAeropuertosRT}
+                    aeropuertoExpandir={aeropuertoResaltado}
                   />
                 )}
               </div>
@@ -1569,6 +1771,10 @@ function App() {
                     minutosVirtualesTotales={minutosVirtualesTotales}
                     fechaInicioSim={fechaInicio}
                     onCerrar={() => setPanelEnviosAbierto(false)}
+                    onEnfocarVuelo={(key) => { setVueloResaltado(key); }}
+                    onEnfocarAlmacen={(cod) => { setAeropuertoResaltado(cod); }}
+                    onVerVuelo={(key) => { setVueloResaltado(key); setPanelVuelosAbierto(true); setPanelEnviosAbierto(false); setPanelAlmacenesAbierto(false); }}
+                    onVerAlmacen={(cod) => { setAeropuertoResaltado(cod); setPanelAlmacenesAbierto(true); setPanelEnviosAbierto(false); setPanelVuelosAbierto(false); }}
                   />
                 )}
               </div>
@@ -1582,6 +1788,7 @@ function App() {
                     fechaInicio={fechaInicio}
                     onSeleccionar={(key) => { setVueloResaltado(key); }}
                     onCerrar={() => setPanelVuelosAbierto(false)}
+                    vueloExpandir={vueloResaltado}
                   />
                 )}
               </div>
