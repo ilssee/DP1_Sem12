@@ -20,8 +20,9 @@ import {
 } from "./services/dataCargaService";
 import type { Solucion } from "./types";
 import SimulacionDiariaPage from "./pages/SimulacionDiariaPage";
+import RegistroPedidoPage from "./pages/RegistroPedidoPage";
 
-type Vista = "dia-a-dia" | "mapa" | "cargar";
+type Vista = "dia-a-dia" | "mapa" | "cargar" | "registro-pedido";
 
 interface EstadoCarga {
   cargando: boolean;
@@ -1637,8 +1638,15 @@ function App() {
         <div
           className={`w-full h-full ${vistaActiva === "dia-a-dia" ? "block" : "hidden"}`}
         >
-          <SimulacionDiariaPage modoOscuro={modoOscuro} />
+          <SimulacionDiariaPage modoOscuro={modoOscuro} onRegistrar={() => setVistaActiva("registro-pedido")} />
         </div>
+
+        {/* VISTA: Registro de Pedido */}
+        {vistaActiva === "registro-pedido" && (
+          <div className="w-full h-full overflow-auto">
+            <RegistroPedidoPage onVolver={() => setVistaActiva("dia-a-dia")} />
+          </div>
+        )}
 
         {/* VISTA 2: Análisis Predictivo */}
         <div

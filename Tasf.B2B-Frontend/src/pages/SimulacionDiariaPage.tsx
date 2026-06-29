@@ -61,8 +61,10 @@ const clasificarTramo = (
 
 export default function SimulacionDiariaPage({
   modoOscuro = true,
+  onRegistrar,
 }: {
   modoOscuro?: boolean;
+  onRegistrar?: () => void;
 }) {
   const [fechaActual, setFechaActual] = useState<Date>(() => new Date());
   const [isPlaying, setIsPlaying] = useState(true);
@@ -71,6 +73,7 @@ export default function SimulacionDiariaPage({
     null,
   );
   const [showForm, setShowForm] = useState(false);
+  const [panelColapsado, setPanelColapsado] = useState(false);
   const [formOrigen, setFormOrigen] = useState("SPIM");
   const [formDestino, setFormDestino] = useState("");
   const [formCantidad, setFormCantidad] = useState<number | "">("");
@@ -327,251 +330,104 @@ export default function SimulacionDiariaPage({
           </div>
         </div>
       </div>
-      <div className="flex-1 p-6 overflow-hidden min-h-0">
-        <div className="grid grid-cols-[1.5fr_0.9fr] gap-6 h-full min-h-0">
-          <section className="relative rounded-3xl overflow-hidden bg-slate-900 shadow-xl">
-            <div className="absolute top-4 left-20 z-20 w-[280px] rounded-2xl bg-slate-950/95 border border-slate-700 px-4 py-3 text-white shadow-lg">
-              <p className="text-[10px] uppercase tracking-widest text-slate-400 mb-1">
-                Hora real
-              </p>
-              <p className="font-mono text-xl font-bold text-white">
-                {formatearHora(fechaActual)}
-              </p>
-              <p className="text-[10px] text-slate-400 mt-1">
-                {formatearFecha(fechaActual)} • {estadoActual}
-              </p>
+      <div className="flex-1 overflow-hidden min-h-0 flex gap-0">
+        {/* Mapa */}
+        <section className="relative flex-1 min-w-0 overflow-hidden">
+          <div className="absolute top-4 left-12 z-20 w-[260px] rounded-2xl bg-slate-950/95 border border-slate-700 px-4 py-3 text-white shadow-lg">
+            <p className="text-[10px] uppercase tracking-widest text-slate-400 mb-1">Hora real</p>
+            <p className="font-mono text-xl font-bold text-white">{formatearHora(fechaActual)}</p>
+            <p className="text-[10px] text-slate-400 mt-1">{formatearFecha(fechaActual)} • {estadoActual}</p>
+          </div>
+          <MapArea
+            solucion={solucionOperativa}
+            progreso={0}
+            modoOscuro={modoOscuro}
+            horaVirtualMinutos={minutosHoy}
+            minutosVirtualesTotales={minutosHoy}
+            fechaInicioSim={fechaHoy}
+          />
+        </section>
+
+        {/* Botón colapsar/expandir panel */}
+        <button
+          onClick={() => setPanelColapsado(v => !v)}
+          className="self-center z-10 w-5 h-14 bg-slate-800 border border-slate-600 flex items-center justify-center text-slate-400 hover:text-white hover:bg-slate-700 transition-colors shadow-md shrink-0"
+          title={panelColapsado ? "Expandir panel" : "Colapsar panel"}
+        >
+          <span className="text-[10px]">{panelColapsado ? "◀" : "▶"}</span>
+        </button>
+
+        {/* Panel lateral */}
+        <aside className={`${panelColapsado ? "w-0 overflow-hidden" : "w-80"} transition-all duration-300 flex flex-col gap-3 p-3 bg-slate-950 shrink-0 overflow-y-auto`}>
+          {/* Botón Registrar */}
+          <button
+            type="button"
+            onClick={() => onRegistrar?.()}
+            className="inline-flex items-center justify-center gap-2 rounded-full bg-tasf-green w-full py-2.5 text-sm font-semibold text-white shadow-md hover:bg-green-600 transition"
+          >
+            <PlusCircle size={16} /> Registrar Pedido
+          </button>
+
+          {/* Estado del flujo */}
+          <div className="rounded-2xl bg-slate-900 border border-slate-700 p-4 text-white flex flex-col flex-1 min-h-0">
+            <div className="flex items-center justify-between gap-2 mb-3">
+              <div>
+                <p className="text-xs uppercase tracking-[0.2em] text-slate-400 font-semibold">Estado del flujo</p>
+                <h3 className="text-xl font-bold text-white mt-1">{totalPedidos} registros</h3>
+              </div>
+              <span className="rounded-full bg-slate-800 px-2 py-1 text-[10px] font-semibold text-slate-300">
+                {isProcessingWindow ? "Sincronizando" : "En vivo"}
+              </span>
             </div>
 
-            <MapArea
-              solucion={solucionOperativa}
-              progreso={0}
-              modoOscuro={modoOscuro}
-              horaVirtualMinutos={minutosHoy}
-              minutosVirtualesTotales={minutosHoy}
-              fechaInicioSim={fechaHoy}
-            />
-          </section>
-
-          <aside className="flex flex-col gap-4 h-full min-h-0">
-            <div className="rounded-3xl bg-slate-900 shadow-xl border border-slate-700 p-4 text-white flex-none max-h-[220px] overflow-y-auto pr-2">
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <p className="text-xs uppercase tracking-[0.2em] text-slate-400 font-semibold">
-                    Registro de pedidos
-                  </p>
-                  <h3 className="mt-2 text-2xl font-bold text-white">
-                    {totalPedidos} pedidos
-                  </h3>
+            <div className="grid grid-cols-2 gap-2 mb-3">
+              {[
+                { label: "Procesando", value: pedidosConEstado.procesando.length },
+                { label: "Asignados", value: pedidosConEstado.asignado.length },
+                { label: "En vuelo", value: pedidosConEstado["en-vuelo"].length },
+                { label: "Completados", value: pedidosConEstado.completado.length },
+              ].map((item) => (
+                <div key={item.label} className="rounded-xl border border-slate-700 bg-slate-950 p-2.5">
+                  <p className="text-[10px] uppercase tracking-widest text-slate-400">{item.label}</p>
+                  <p className="mt-1 text-2xl font-bold text-white">{item.value}</p>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => setShowForm((value) => !value)}
-                  className="inline-flex items-center gap-2 rounded-full bg-tasf-green px-3 py-2 text-sm font-semibold text-white shadow-md hover:bg-green-600 transition"
-                >
-                  <PlusCircle size={16} /> Registrar
-                </button>
-              </div>
+              ))}
+            </div>
 
-              {showForm ? (
-                <form onSubmit={handleSubmitManual} className="mt-3 space-y-2">
-                  <div className="grid grid-cols-2 gap-2">
-                    <input
-                      value={formOrigen}
-                      onChange={(e) =>
-                        setFormOrigen(e.target.value.toUpperCase())
-                      }
-                      placeholder="Origen"
-                      className="w-full rounded-xl border border-slate-700 bg-slate-950 px-2 py-2 text-sm uppercase text-white outline-none focus:border-tasf-green"
-                      maxLength={4}
-                      required
-                    />
-                    <input
-                      value={formDestino}
-                      onChange={(e) =>
-                        setFormDestino(e.target.value.toUpperCase())
-                      }
-                      placeholder="Destino"
-                      className="w-full rounded-xl border border-slate-700 bg-slate-950 px-2 py-2 text-sm uppercase text-white outline-none focus:border-tasf-green"
-                      maxLength={4}
-                      required
-                    />
-                  </div>
-                  <div className="grid grid-cols-2 gap-2">
-                    <input
-                      type="number"
-                      value={formCantidad}
-                      onChange={(e) =>
-                        setFormCantidad(
-                          e.target.value === "" ? "" : Number(e.target.value),
-                        )
-                      }
-                      placeholder="N° maletas"
-                      min={1}
-                      className="w-full rounded-xl border border-slate-700 bg-slate-950 px-2 py-2 text-sm text-white outline-none focus:border-tasf-green"
-                      required
-                    />
-                    <input
-                      value={formCliente}
-                      onChange={(e) => setFormCliente(e.target.value)}
-                      placeholder="ID cliente"
-                      className="w-full rounded-xl border border-slate-700 bg-slate-950 px-2 py-2 text-sm text-white outline-none focus:border-tasf-green"
-                      required
-                    />
-                  </div>
-                  <div className="flex gap-2 mt-2">
-                    <button
-                      type="button"
-                      onClick={() => setShowForm(false)}
-                      className="flex-1 rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm font-semibold text-slate-200 hover:bg-slate-800"
-                    >
-                      Cancelar
-                    </button>
-                    <button
-                      type="submit"
-                      disabled={formLoading}
-                      className="flex-1 rounded-xl bg-tasf-dark px-3 py-2 text-sm font-semibold text-white hover:bg-slate-800 transition"
-                    >
-                      {formLoading ? "Guardando..." : "Enviar"}
-                    </button>
-                  </div>
-                </form>
-              ) : (
-                <div className="mt-3 rounded-2xl bg-slate-950 p-3 border border-slate-700">
-                  {pedidosManuales.length === 0 ? (
-                    <p className="text-sm text-slate-400">
-                      Registra el primer pedido manual.
+            <div className="flex-1 min-h-0 overflow-y-auto space-y-2 pr-1">
+              {Object.entries(pedidosConEstado).map(([estado, pedidos]) => (
+                <div key={estado} className="rounded-xl bg-slate-950 border border-slate-700 p-2.5">
+                  <div className="flex items-center justify-between gap-2 mb-1">
+                    <p className="text-[10px] uppercase tracking-widest text-slate-400 font-semibold">
+                      {estado === "en-vuelo" ? "En vuelo"
+                        : estado === "procesando" ? "Procesando"
+                        : estado === "pendiente" ? "Pendientes"
+                        : estado === "asignado" ? "Asignados"
+                        : estado === "completado" ? "Completados"
+                        : estado}
                     </p>
+                    <span className="rounded-full bg-slate-800 px-2 py-0.5 text-[9px] font-semibold text-slate-300">{pedidos.length}</span>
+                  </div>
+                  {pedidos.length === 0 ? (
+                    <p className="text-xs text-slate-600">Sin envíos</p>
                   ) : (
-                    <div className="text-sm text-slate-200 space-y-1">
-                      <div>
-                        <span className="font-semibold">Origen:</span>{" "}
-                        {pedidosManuales[pedidosManuales.length - 1].origen}
-                      </div>
-                      <div>
-                        <span className="font-semibold">Destino:</span>{" "}
-                        {pedidosManuales[pedidosManuales.length - 1].destino}
-                      </div>
-                      <div>
-                        <span className="font-semibold">Maletas:</span>{" "}
-                        {
-                          pedidosManuales[pedidosManuales.length - 1]
-                            .cantidadMaletas
-                        }
-                      </div>
+                    <div className="space-y-1.5">
+                      {pedidos.slice(-3).reverse().map((pedido) => (
+                        <div key={pedido.idPedido} className="rounded-lg bg-slate-900 border border-slate-700 px-2.5 py-2">
+                          <div className="flex items-center justify-between gap-1">
+                            <span className="font-mono text-[10px] text-slate-500 truncate">{pedido.idPedido}</span>
+                            <span className="text-[10px] font-semibold text-slate-300 shrink-0">{pedido.cantidadMaletas} mal.</span>
+                          </div>
+                          <p className="text-xs font-semibold text-white mt-0.5">{pedido.origen} → {pedido.destino}</p>
+                        </div>
+                      ))}
                     </div>
                   )}
                 </div>
-              )}
+              ))}
             </div>
-
-            <div className="rounded-3xl bg-slate-900 shadow-xl border border-slate-700 p-5 flex flex-col flex-1 min-h-0 text-white">
-              <div className="flex items-center justify-between gap-4">
-                <div>
-                  <p className="text-xs uppercase tracking-[0.2em] text-slate-400 font-semibold">
-                    Estado del flujo
-                  </p>
-                  <h3 className="mt-3 text-2xl font-bold text-white">
-                    {totalPedidos} registros
-                  </h3>
-                </div>
-                <span className="rounded-full bg-slate-800 px-3 py-1 text-xs font-semibold text-slate-300">
-                  {isProcessingWindow ? "Sincronizando" : "En vivo"}
-                </span>
-              </div>
-
-              <div className="mt-4 grid grid-cols-2 gap-3">
-                {[
-                  {
-                    label: "Procesando",
-                    value: pedidosConEstado.procesando.length,
-                  },
-                  {
-                    label: "Asignados",
-                    value: pedidosConEstado.asignado.length,
-                  },
-                  {
-                    label: "En vuelo",
-                    value: pedidosConEstado["en-vuelo"].length,
-                  },
-                  {
-                    label: "Completados",
-                    value: pedidosConEstado.completado.length,
-                  },
-                ].map((item) => (
-                  <div
-                    key={item.label}
-                    className="rounded-3xl border border-slate-700 bg-slate-950 p-3"
-                  >
-                    <p className="text-[11px] uppercase tracking-[0.2em] text-slate-400">
-                      {item.label}
-                    </p>
-                    <p className="mt-2 text-3xl font-bold text-white">
-                      {item.value}
-                    </p>
-                  </div>
-                ))}
-              </div>
-
-              <div className="mt-4 flex-1 min-h-0 overflow-y-auto space-y-2 pr-2">
-                {Object.entries(pedidosConEstado).map(([estado, pedidos]) => (
-                  <div
-                    key={estado}
-                    className="rounded-3xl bg-slate-950 border border-slate-700 p-3"
-                  >
-                    <div className="flex items-center justify-between gap-3">
-                      <p className="text-xs uppercase tracking-[0.2em] text-slate-400 font-semibold">
-                        {estado === "en-vuelo"
-                          ? "En vuelo"
-                          : estado === "procesando"
-                            ? "Procesando"
-                            : estado === "pendiente"
-                              ? "Pendientes"
-                              : estado === "asignado"
-                                ? "Asignados"
-                                : estado === "completado"
-                                  ? "Completados"
-                                  : estado}
-                      </p>
-                      <span className="rounded-full bg-slate-800 px-2 py-1 text-[10px] font-semibold text-slate-300">
-                        {pedidos.length}
-                      </span>
-                    </div>
-                    {pedidos.length === 0 ? (
-                      <p className="mt-3 text-sm text-slate-400">Sin envíos</p>
-                    ) : (
-                      <div className="mt-3 space-y-2">
-                        {pedidos
-                          .slice(-3)
-                          .reverse()
-                          .map((pedido) => (
-                            <div
-                              key={pedido.idPedido}
-                              className="rounded-2xl bg-slate-900 border border-slate-700 p-3"
-                            >
-                              <div className="flex items-center justify-between gap-2">
-                                <span className="font-mono text-xs text-slate-400 truncate">
-                                  {pedido.idPedido}
-                                </span>
-                                <span className="text-[11px] font-semibold text-slate-300">
-                                  {pedido.cantidadMaletas} mal.
-                                </span>
-                              </div>
-                              <p className="mt-2 text-sm font-semibold text-white">
-                                {pedido.origen} → {pedido.destino}
-                              </p>
-                              <p className="mt-1 text-[11px] text-slate-400">
-                                Cliente {pedido.idCliente}
-                              </p>
-                            </div>
-                          ))}
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </div>
-          </aside>
-        </div>
+          </div>
+        </aside>
       </div>
     </div>
   );
