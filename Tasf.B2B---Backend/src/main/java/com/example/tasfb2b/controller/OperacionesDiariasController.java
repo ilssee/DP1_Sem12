@@ -8,7 +8,9 @@ import com.example.tasfb2b.model.Vuelo;
 import com.example.tasfb2b.repository.AeropuertoRepository;
 import com.example.tasfb2b.repository.PedidoRepository;
 import com.example.tasfb2b.repository.VueloRepository;
+import com.example.tasfb2b.service.EstadoDiarioCache;
 import com.example.tasfb2b.service.TabuSearchService;
+import com.example.tasfb2b.util.TimeCalculator;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
@@ -16,10 +18,14 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.time.LocalDateTime;
-import java.time.LocalTime;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/api/diario")
@@ -30,6 +36,7 @@ public class OperacionesDiariasController {
     private final AeropuertoRepository aeropuertoRepository;
     private final VueloRepository vueloRepository;
     private final TabuSearchService tabuSearchService;
+    private final EstadoDiarioCache estadoDiarioCache;
     private final JdbcTemplate jdbc;
 
     private static final RowMapper<Pedido> PEDIDO_MAPPER = (rs, rowNum) -> {
@@ -47,11 +54,13 @@ public class OperacionesDiariasController {
                                         AeropuertoRepository aeropuertoRepository,
                                         VueloRepository vueloRepository,
                                         TabuSearchService tabuSearchService,
+                                        EstadoDiarioCache estadoDiarioCache,
                                         JdbcTemplate jdbc) {
         this.pedidoRepository = pedidoRepository;
         this.aeropuertoRepository = aeropuertoRepository;
         this.vueloRepository = vueloRepository;
         this.tabuSearchService = tabuSearchService;
+        this.estadoDiarioCache = estadoDiarioCache;
         this.jdbc = jdbc;
     }
 
@@ -81,104 +90,121 @@ public class OperacionesDiariasController {
         return pedidoRepository.save(p);
     }
 
+    @DeleteMapping("/limpiar")
+    public void limpiarEstado(@RequestParam(name = "fecha") String fecha) {
+        estadoDiarioCache.limpiar(fecha);
+    }
+
     @GetMapping("/ventana")
     public Solucion ejecutarVentanaDiaria(
             @RequestParam(name = "fechaInicioSimulacion") String fechaInicioSimulacionStr,
             @RequestParam(name = "fechaHoraActual") String fechaHoraActualStr,
-            @RequestParam(name = "ventanaMinutos", defaultValue = "5") int ventanaMinutos
+            @RequestParam(name = "ventanaMinutos", defaultValue = "1") int ventanaMinutos
     ) {
         LocalDateTime horaActualVirtual = LocalDateTime.parse(fechaHoraActualStr);
 
-        // 1. EL MARGEN DE SEGURIDAD RED (Retrocedemos 1 minuto)
+        // Margen de seguridad: retrocedemos 1 minuto para capturar pedidos tardíos
         LocalDateTime inicioVentanaNuevos = horaActualVirtual.minusMinutes(1);
         LocalDateTime finVentanaVirtual = horaActualVirtual.plusMinutes(ventanaMinutos);
-        LocalDateTime inicioHistorial = horaActualVirtual.minusDays(3);
 
         List<Aeropuerto> aeropuertos = aeropuertoRepository.findAll();
         List<Vuelo> vuelos = vueloRepository.findAll();
+        Map<String, Aeropuerto> mapaAeros = new HashMap<>();
+        for (Aeropuerto a : aeropuertos) mapaAeros.put(a.getCodigo(), a);
 
-        // 2. QUERY HISTÓRICA: Solo jala pedidos pasados que sean MANUALES
-        List<Pedido> pedidosDelPasadoSurgidosHoy = jdbc.query(
-                "SELECT id_pedido, origen, destino, fecha_registro, cantidad_maletas, id_cliente " +
-                        "FROM pedidos WHERE fecha_registro >= ? AND fecha_registro < ? " +
-                        "AND id_pedido LIKE 'MANUAL-%' ORDER BY fecha_registro",
-                PEDIDO_MAPPER, inicioHistorial, inicioVentanaNuevos);
+        // Recuperar estado acumulado del día
+        Solucion estadoAcumulado = estadoDiarioCache.obtener(fechaInicioSimulacionStr);
 
-        // 3. QUERY NUEVOS: Solo jala pedidos nuevos que sean MANUALES
+        // Pedidos nuevos de esta ventana (solo MANUALES)
         List<Pedido> pedidosNuevosVentana = jdbc.query(
                 "SELECT id_pedido, origen, destino, fecha_registro, cantidad_maletas, id_cliente " +
                         "FROM pedidos WHERE fecha_registro >= ? AND fecha_registro < ? " +
                         "AND id_pedido LIKE 'MANUAL-%' ORDER BY fecha_registro",
                 PEDIDO_MAPPER, inicioVentanaNuevos, finVentanaVirtual);
 
-        Solucion solucion;
-
-        // 1. EJECUCIÓN TABÚ
+        // Ejecutar Tabu Search pasando el estado acumulado como base
+        Solucion solucionParcial;
         if (pedidosNuevosVentana.isEmpty()) {
-            solucion = tabuSearchService.ejecutarOptimizacion(pedidosDelPasadoSurgidosHoy, List.of(), vuelos, aeropuertos, 0);
+            solucionParcial = tabuSearchService.ejecutarOptimizacionConEstado(estadoAcumulado, List.of(), vuelos, aeropuertos, 0);
         } else {
-            solucion = tabuSearchService.ejecutarOptimizacion(pedidosDelPasadoSurgidosHoy, pedidosNuevosVentana, vuelos, aeropuertos, 20);
+            solucionParcial = tabuSearchService.ejecutarOptimizacionConEstado(estadoAcumulado, pedidosNuevosVentana, vuelos, aeropuertos, 20);
         }
 
-        // --- EL NUEVO FILTRO LÓGICO DE TIEMPO REAL ---
-        LocalTime horaReal = horaActualVirtual.toLocalTime();
-        int minActual = horaReal.getHour() * 60 + horaReal.getMinute();
+        // Acumular rutas, ocupaciones y fechas en el estado del día
+        estadoAcumulado.getOcupacionVuelos().putAll(solucionParcial.getOcupacionVuelos());
+        estadoAcumulado.getOcupacionAeropuertos().putAll(solucionParcial.getOcupacionAeropuertos());
+        estadoAcumulado.getRutasAsignadas().putAll(solucionParcial.getRutasAsignadas());
+        estadoAcumulado.getFechasTramos().putAll(solucionParcial.getFechasTramos());
+        if (solucionParcial.getDetallesEnvios() != null)
+            estadoAcumulado.getDetallesEnvios().putAll(solucionParcial.getDetallesEnvios());
+        if (solucionParcial.getCapacidadesVuelos() != null)
+            estadoAcumulado.getCapacidadesVuelos().putAll(solucionParcial.getCapacidadesVuelos());
+        if (solucionParcial.getCapacidadesAeropuertos() != null)
+            estadoAcumulado.setCapacidadesAeropuertos(solucionParcial.getCapacidadesAeropuertos());
 
-        Map<String, List<Vuelo>> rutasEnVivo = new java.util.HashMap<>();
-        Map<String, Integer> ocupacionEnVivo = new java.util.HashMap<>();
-        java.util.Set<String> vuelosActivosKey = new java.util.HashSet<>();
+        // Filtrar rutas activas ahora usando LocalDateTime completo (con fecha real por pedido)
+        Map<String, List<Vuelo>> rutasEnVivo = new HashMap<>();
+        Map<String, Integer> ocupacionEnVivo = new HashMap<>();
+        Set<String> vuelosActivosKey = new HashSet<>();
 
-        for (Map.Entry<String, List<Vuelo>> entry : solucion.getRutasAsignadas().entrySet()) {
-            boolean estaVolando = false;
+        for (Map.Entry<String, List<Vuelo>> entry : estadoAcumulado.getRutasAsignadas().entrySet()) {
+            String pedidoId = entry.getKey();
+            List<Vuelo> ruta = entry.getValue();
 
-            for (Vuelo v : entry.getValue()) {
-                int minSalida = v.getHoraSalida().getHour() * 60 + v.getHoraSalida().getMinute();
-                int minLlegada = v.getHoraLlegada().getHour() * 60 + v.getHoraLlegada().getMinute();
-                if (minLlegada < minSalida) minLlegada += 1440;
+            // Reconstruir fechaHora real de cada tramo acumulando desde fechasTramos
+            List<String> fechasTramos = estadoAcumulado.getFechasTramos().getOrDefault(pedidoId, List.of());
 
-                int actual = minActual;
-                if (actual < minSalida && minLlegada >= 1440) actual += 1440;
+            boolean hayTramoActivo = false;
+            for (int i = 0; i < ruta.size(); i++) {
+                Vuelo v = ruta.get(i);
+                if (i >= fechasTramos.size()) break;
 
-                // Margen ampliado para que no desaparezcan justo al aterrizar
-                if (actual >= (minSalida - 30) && actual <= (minLlegada + 30)) {
-                    estaVolando = true;
-                    // Formateamos la hora estrictamente a HH:mm para que haga match con el Tabú
-                    String hhmm = String.format("%02d:%02d", v.getHoraSalida().getHour(), v.getHoraSalida().getMinute());
+                // Fecha real de salida de este tramo viene de fechasTramos
+                LocalDateTime salidaReal = LocalDateTime.of(
+                        java.time.LocalDate.parse(fechasTramos.get(i)), v.getHoraSalida());
+
+                Aeropuerto orig = mapaAeros.get(v.getOrigen());
+                Aeropuerto dest = mapaAeros.get(v.getDestino());
+                if (orig == null || dest == null) continue;
+
+                long duracionMin = TimeCalculator.calcularDuracionVueloMinutos(v, orig, dest);
+                LocalDateTime llegadaReal = salidaReal.plusMinutes(duracionMin);
+
+                // Margen de ±2 min para no perder el avión justo al cambiar de minuto
+                if (!horaActualVirtual.isBefore(salidaReal.minusMinutes(2)) &&
+                    !horaActualVirtual.isAfter(llegadaReal.plusMinutes(2))) {
+
+                    hayTramoActivo = true;
+                    String hhmm = String.format("%02d:%02d:%02d",
+                            v.getHoraSalida().getHour(),
+                            v.getHoraSalida().getMinute(),
+                            v.getHoraSalida().getSecond());
                     String prefijoVuelo = v.getOrigen() + "-" + v.getDestino() + "-" + hhmm;
                     vuelosActivosKey.add(prefijoVuelo);
 
-                    // CORRECCIÓN DEL CERO: Buscamos la llave real que genera el Tabú
-                    for (Map.Entry<String, Integer> oc : solucion.getOcupacionVuelos().entrySet()) {
-                        if (oc.getKey().startsWith(prefijoVuelo)) {
+                    for (Map.Entry<String, Integer> oc : estadoAcumulado.getOcupacionVuelos().entrySet()) {
+                        if (oc.getKey().startsWith(v.getOrigen() + "-" + v.getDestino() + "-" + hhmm)) {
                             ocupacionEnVivo.put(oc.getKey(), oc.getValue());
                         }
                     }
                 }
             }
-            if (estaVolando) {
-                rutasEnVivo.put(entry.getKey(), entry.getValue());
+            if (hayTramoActivo) {
+                rutasEnVivo.put(pedidoId, ruta);
             }
         }
 
-        solucion.setRutasAsignadas(rutasEnVivo);
+        // Construir solucion de respuesta con estado acumulado completo + filtro en vivo
+        Solucion respuesta = new Solucion();
+        respuesta.setRutasAsignadas(rutasEnVivo);
+        respuesta.setOcupacionVuelos(ocupacionEnVivo);
+        respuesta.setOcupacionAeropuertos(new HashMap<>(estadoAcumulado.getOcupacionAeropuertos()));
+        respuesta.setDetallesEnvios(new HashMap<>(estadoAcumulado.getDetallesEnvios()));
+        respuesta.setFechasTramos(new HashMap<>(estadoAcumulado.getFechasTramos()));
+        respuesta.setCapacidadesVuelos(new HashMap<>(estadoAcumulado.getCapacidadesVuelos() != null
+                ? estadoAcumulado.getCapacidadesVuelos() : Map.of()));
+        respuesta.setCapacidadesAeropuertos(estadoAcumulado.getCapacidadesAeropuertos());
 
-        // Capacidades (las guardamos usando el prefijo)
-        solucion.setCapacidadesVuelos(solucion.getCapacidadesVuelos().entrySet().stream()
-                .filter(e -> vuelosActivosKey.stream().anyMatch(prefijo -> e.getKey().startsWith(prefijo)))
-                .collect(java.util.stream.Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue)));
-
-        // 3. Top 10 Ocupación Vuelos (¡Ahora con los valores verdaderos!)
-        solucion.setOcupacionVuelos(ocupacionEnVivo.entrySet().stream()
-                .sorted((a, b) -> b.getValue().compareTo(a.getValue()))
-                .limit(10)
-                .collect(java.util.stream.Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue)));
-
-        // 4. Top 10 Cuellos de Botella
-        solucion.setOcupacionAeropuertos(solucion.getOcupacionAeropuertos().entrySet().stream()
-                .sorted((a, b) -> b.getValue().compareTo(a.getValue()))
-                .limit(10)
-                .collect(java.util.stream.Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue)));
-
-        return solucion;
+        return respuesta;
     }
 }
