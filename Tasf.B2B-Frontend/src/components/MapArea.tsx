@@ -210,6 +210,35 @@ export default function MapArea({ solucion, progreso, modoOscuro = true, horaVir
     return resultado;
   }, [solucion]);
 
+  // Indicadores globales
+  const indicadores = useMemo(() => {
+    const minutosActuales = minutosVirtualesTotales ?? horaVirtualMinutos;
+    let totalMaletasFlota = 0, totalCapFlota = 0;
+    rutasVisuales.forEach(vuelo => {
+      if (vuelo.cantidad === 0) return;
+      const p = vuelo.fechaSalida
+        ? calcularProgresoTotal(vuelo.fechaSalida, vuelo.horaSalida, vuelo.horaLlegada, fechaInicioSim, minutosActuales)
+        : -1;
+      if (p < 0 || p >= 1) return;
+      totalMaletasFlota += vuelo.cantidad;
+      totalCapFlota += vuelo.capMax;
+    });
+    const pctFlota = totalCapFlota > 0 ? Math.round((totalMaletasFlota / totalCapFlota) * 100) : 0;
+
+    let totalMaletasAero = 0, totalCapAero = 0;
+    Object.entries(aeropuertosDB).forEach(([codigo]) => {
+      const cap = solucion?.capacidadesAeropuertos?.[codigo] ?? 0;
+      if (cap <= 0) return;
+      totalMaletasAero += ocupacionAeropuertosRT[codigo] ?? 0;
+      totalCapAero += cap;
+    });
+    const pctAero = totalCapAero > 0 ? Math.round((totalMaletasAero / totalCapAero) * 100) : 0;
+
+    return { pctFlota, totalMaletasFlota, totalCapFlota, pctAero, totalMaletasAero, totalCapAero };
+  }, [rutasVisuales, minutosVirtualesTotales, horaVirtualMinutos, fechaInicioSim, ocupacionAeropuertosRT, solucion]);
+
+  const colorSemaforo = (pct: number) => pct >= 80 ? '#E32929' : pct >= 50 ? '#FFB800' : '#178D47';
+
   const elementosMapa = useMemo(() => {
     const avionesEnPantalla: React.ReactElement[] = [];
     let lineaRutaSeleccionada: React.ReactElement | null = null;
@@ -312,6 +341,40 @@ export default function MapArea({ solucion, progreso, modoOscuro = true, horaVir
 
   return (
     <div style={{ position: 'relative', height: '100%', width: '100%' }}>
+      {/* Indicadores globales flotantes */}
+      <div style={{ position: 'absolute', bottom: 60, left: 12, zIndex: 1000, display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {/* Flota */}
+        <div style={{ background: 'rgba(15,23,42,0.92)', border: '1px solid rgba(100,116,139,0.4)', borderRadius: 10, padding: '8px 12px', minWidth: 150, backdropFilter: 'blur(6px)' }}>
+          <div style={{ fontSize: 9, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 4 }}>Ocupación Flota</div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <div style={{ width: 12, height: 12, borderRadius: '50%', background: colorSemaforo(indicadores.pctFlota), flexShrink: 0, boxShadow: `0 0 6px ${colorSemaforo(indicadores.pctFlota)}` }} />
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 18, fontWeight: 700, color: colorSemaforo(indicadores.pctFlota), lineHeight: 1 }}>{indicadores.pctFlota}%</div>
+              <div style={{ fontSize: 9, color: '#64748b', marginTop: 2 }}>{indicadores.totalMaletasFlota} / {indicadores.totalCapFlota} mal.</div>
+            </div>
+          </div>
+          {/* Barra de progreso */}
+          <div style={{ marginTop: 6, height: 4, background: 'rgba(100,116,139,0.2)', borderRadius: 2, overflow: 'hidden' }}>
+            <div style={{ height: '100%', width: `${Math.min(indicadores.pctFlota, 100)}%`, background: colorSemaforo(indicadores.pctFlota), borderRadius: 2, transition: 'width 0.5s ease' }} />
+          </div>
+        </div>
+
+        {/* Almacenes */}
+        <div style={{ background: 'rgba(15,23,42,0.92)', border: '1px solid rgba(100,116,139,0.4)', borderRadius: 10, padding: '8px 12px', minWidth: 150, backdropFilter: 'blur(6px)' }}>
+          <div style={{ fontSize: 9, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 4 }}>Ocupación Almacenes</div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <div style={{ width: 12, height: 12, borderRadius: '50%', background: colorSemaforo(indicadores.pctAero), flexShrink: 0, boxShadow: `0 0 6px ${colorSemaforo(indicadores.pctAero)}` }} />
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 18, fontWeight: 700, color: colorSemaforo(indicadores.pctAero), lineHeight: 1 }}>{indicadores.pctAero}%</div>
+              <div style={{ fontSize: 9, color: '#64748b', marginTop: 2 }}>{indicadores.totalMaletasAero} / {indicadores.totalCapAero} mal.</div>
+            </div>
+          </div>
+          <div style={{ marginTop: 6, height: 4, background: 'rgba(100,116,139,0.2)', borderRadius: 2, overflow: 'hidden' }}>
+            <div style={{ height: '100%', width: `${Math.min(indicadores.pctAero, 100)}%`, background: colorSemaforo(indicadores.pctAero), borderRadius: 2, transition: 'width 0.5s ease' }} />
+          </div>
+        </div>
+      </div>
+
       {/* Botón flotante vuelos vacíos */}
       <button
         onClick={() => setMostrarVacíos(v => !v)}
