@@ -135,11 +135,13 @@ public class AsyncSimulacionService {
                         if (salidaDT.isBefore(ventanaInicio) || salidaDT.isAfter(ventanaFin.plusHours(24))) continue;
                         String clave = v.getOrigen() + "-" + v.getDestino() + "-" + v.getHoraSalida().format(fmtBloque) + "_" + fecha;
                         solucionParcial.getOcupacionVuelos().putIfAbsent(clave, 0);
+                        // Capacidad por ruta (clave sin fecha)
+                        String claveRuta = v.getOrigen() + "-" + v.getDestino() + "-" + v.getHoraSalida().format(fmtBloque);
+                        solucionParcial.getCapacidadesVuelos().putIfAbsent(claveRuta, v.getCapacidadMax());
                     }
                 }
 
-                // capacidadesVuelos: enviar todos (sin filtrar por asignación)
-                // El frontend ya tiene el mapa completo de capacidades por ruta
+                // capacidadesVuelos ya poblado en el loop anterior
 
                 // Vuelos con maletas: top 200 por ocupación
                 // Vuelos con 0 maletas: todos los del bloque actual (para mostrar en mapa)

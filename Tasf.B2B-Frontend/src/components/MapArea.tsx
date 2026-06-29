@@ -17,6 +17,8 @@ interface MapAreaProps {
   ocupacionAeropuertosRT?: Record<string, number>;
   onAeropuertoClick?: (codigo: string) => void;
   onVueloClick?: (key: string) => void;
+  aeropuertosFiltrados?: string[] | null;
+  vuelosFiltrados?: string[] | null;
 }
 
 function EventosMapa({ alHacerClic }: { alHacerClic: () => void }) {
@@ -112,7 +114,7 @@ const calcularProgresoTotal = (
   return (minutosActuales - minSalida) / (minLlegada - minSalida);
 };
 
-export default function MapArea({ solucion, progreso, modoOscuro = true, horaVirtualMinutos = 0, minutosVirtualesTotales, fechaInicioSim = "2026-01-05", vueloResaltado, onVueloResaltadoClear, aeropuertoResaltado, ocupacionAeropuertosRT = {}, onAeropuertoClick, onVueloClick }: MapAreaProps) {
+export default function MapArea({ solucion, progreso, modoOscuro = true, horaVirtualMinutos = 0, minutosVirtualesTotales, fechaInicioSim = "2026-01-05", vueloResaltado, onVueloResaltadoClear, aeropuertoResaltado, ocupacionAeropuertosRT = {}, onAeropuertoClick, onVueloClick, aeropuertosFiltrados, vuelosFiltrados }: MapAreaProps) {
   const [vueloSeleccionado, setVueloSeleccionado] = useState<string | null>(null);
   const [mostrarVacíos, setMostrarVacíos] = useState(false);
   const markerRefs = useRef<Map<string, L.Marker>>(new Map());
@@ -190,7 +192,7 @@ export default function MapArea({ solucion, progreso, modoOscuro = true, horaVir
       const pct = cap > 0 ? (cantidad / cap) * 100 : 0;
       let color = '#64748b'; // gris = sin maletas
       if (cantidad > 0) {
-        color = pct >= 90 ? '#E32929' : pct >= 70 ? '#FFB800' : '#178D47';
+        color = pct >= 80 ? '#E32929' : pct >= 50 ? '#FFB800' : '#178D47';
       }
 
       resultado.push({
@@ -226,7 +228,8 @@ export default function MapArea({ solucion, progreso, modoOscuro = true, horaVir
       const rumbo = calcularRumbo(vuelo.lat1, vuelo.lng1, vuelo.lat2, vuelo.lng2);
 
       const isSelected = vueloSeleccionado === vuelo.id;
-      const isDimmed = vueloSeleccionado !== null && !isSelected;
+      const filteredOut = vuelosFiltrados !== null && vuelosFiltrados !== undefined && !vuelosFiltrados.includes(vuelo.id);
+      const isDimmed = (vueloSeleccionado !== null && !isSelected) || filteredOut;
 
       if (isSelected) {
         posicionResaltado = [lat, lng];
@@ -271,7 +274,7 @@ export default function MapArea({ solucion, progreso, modoOscuro = true, horaVir
     });
 
     return { avionesEnPantalla, posicionResaltado };
-  }, [rutasVisuales, Math.floor(minutosVirtualesTotales), vueloSeleccionado, mostrarVacíos]);
+  }, [rutasVisuales, Math.floor(minutosVirtualesTotales), vueloSeleccionado, mostrarVacíos, vuelosFiltrados]);
 
   // Línea de ruta para el vuelo seleccionado
   const lineaRuta = useMemo(() => {
@@ -347,11 +350,12 @@ export default function MapArea({ solucion, progreso, modoOscuro = true, horaVir
         const pct = capMax > 0 ? (ocupacion / capMax) * 100 : 0;
         const color = pct >= 80 ? "#E32929" : pct >= 50 ? "#FFB800" : (modoOscuro ? "white" : "#1e293b");
         const resaltado = aeropuertoResaltado === codigo;
+        const aeroFilteredOut = aeropuertosFiltrados !== null && aeropuertosFiltrados !== undefined && !aeropuertosFiltrados.includes(codigo);
         const pinW = resaltado ? 26 : 18;
         const pinH = resaltado ? 36 : 26;
         const fillColor = pct >= 80 ? '#E32929' : pct >= 50 ? '#FFB800' : '#22c55e';
         const pinDinamico = new L.DivIcon({
-          html: `<svg viewBox="0 0 28 24" width="${pinW}" height="${pinH}" xmlns="http://www.w3.org/2000/svg">
+          html: `<svg viewBox="0 0 28 24" width="${pinW}" height="${pinH}" xmlns="http://www.w3.org/2000/svg" opacity="${aeroFilteredOut ? 0.15 : 1}">
             <rect x="1" y="9" width="26" height="14" rx="1" fill="${fillColor}" stroke="rgba(0,0,0,0.5)" stroke-width="0.8"/>
             <rect x="1" y="7" width="26" height="3" rx="0.5" fill="${fillColor}" stroke="rgba(0,0,0,0.5)" stroke-width="0.8"/>
             <rect x="8" y="4" width="12" height="4" rx="0.5" fill="${fillColor}" stroke="rgba(0,0,0,0.5)" stroke-width="0.8"/>

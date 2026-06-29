@@ -203,15 +203,17 @@ function AeroSelect({ value, onChange, opciones, placeholder }: {
   );
 }
 
-function DrawerVuelos({ resultado, minutosVirtualesTotales, fechaInicio, onSeleccionar, onCerrar, vueloExpandir }: {
+function DrawerVuelos({ resultado, minutosVirtualesTotales, fechaInicio, onSeleccionar, onCerrar, vueloExpandir, onFiltrados }: {
   resultado: any; minutosVirtualesTotales: number; fechaInicio: string;
   onSeleccionar: (key: string) => void; onCerrar: () => void;
   vueloExpandir?: string | null;
+  onFiltrados?: (keys: string[] | null) => void;
 }) {
-  const [orden, setOrden] = useState<{ col: 'cant'|'envios'|'minSalida'|'minLlegada'|'origen'|'destino'; dir: 1|-1 }>({ col: 'minSalida', dir: 1 });
+  const [orden, setOrden] = useState<{ col: 'cant'|'cap'|'pct'|'envios'|'minSalida'|'minLlegada'|'origen'|'destino'; dir: 1|-1 }>({ col: 'minSalida', dir: 1 });
   const [filtrosAbiertos, setFiltrosAbiertos] = useState(false);
   const [filtroOrigen, setFiltroOrigen] = useState('');
   const [filtroDestino, setFiltroDestino] = useState('');
+  const [filtroSemaforoV, setFiltroSemaforoV] = useState<''|'verde'|'amarillo'|'rojo'|'vacio'>('');
   const filaRefs = useRef<Map<string, HTMLTableRowElement>>(new Map());
 
   useEffect(() => {
@@ -241,7 +243,6 @@ function DrawerVuelos({ resultado, minutosVirtualesTotales, fechaInicio, onSelec
     const horasLlegadaMap = resultado.horasLlegada ?? {};
 
     return Object.entries(resultado.ocupacionVuelos ?? {})
-      .filter(([, cant]) => (cant as number) > 0)
       .map(([key, cant]) => {
         const idx = key.lastIndexOf("_");
         if (idx < 0) return null;
@@ -262,7 +263,9 @@ function DrawerVuelos({ resultado, minutosVirtualesTotales, fechaInicio, onSelec
         if (minLlegada <= minSalida) minLlegada += 1440;
         if (minutosVirtualesTotales < minSalida || minutosVirtualesTotales >= minLlegada) return null;
         const envios = enviosPorVuelo.get(`${origen}-${destino}-${horaSalida}`) ?? 0;
-        return { key, origen, destino, horaSalida, horaLlegada, fecha, cant: cant as number, envios, minSalida, minLlegada };
+        const cap = (resultado.capacidadesVuelos ?? {})[claveRuta] ?? 350;
+        const pct = cap > 0 ? Math.round(((cant as number) / cap) * 100) : 0;
+        return { key, origen, destino, horaSalida, horaLlegada, fecha, cant: cant as number, envios, minSalida, minLlegada, pct, cap };
       })
       .filter(Boolean) as any[];
   }, [resultado, minutosVirtualesTotales, fechaInicio]);
@@ -271,16 +274,28 @@ function DrawerVuelos({ resultado, minutosVirtualesTotales, fechaInicio, onSelec
     const fo = filtroOrigen.trim().toUpperCase();
     const fd = filtroDestino.trim().toUpperCase();
     return [...vuelosActivos]
-      .filter(v =>
-        (!fo || v.origen.toUpperCase().includes(fo)) &&
-        (!fd || v.destino.toUpperCase().includes(fd))
-      )
+      .filter(v => {
+        if (filtroSemaforoV !== 'vacio' && v.cant === 0) return false; // ocultar vacíos salvo que se filtren explícitamente
+        if (fo && !v.origen.toUpperCase().includes(fo)) return false;
+        if (fd && !v.destino.toUpperCase().includes(fd)) return false;
+        if (filtroSemaforoV === 'vacio' && v.cant !== 0) return false;
+        if (filtroSemaforoV === 'verde' && !(v.cant > 0 && v.pct < 50)) return false;
+        if (filtroSemaforoV === 'amarillo' && !(v.pct >= 50 && v.pct < 80)) return false;
+        if (filtroSemaforoV === 'rojo' && v.pct < 80) return false;
+        return true;
+      })
       .sort((a, b) => {
         if (orden.col === 'origen' || orden.col === 'destino')
           return a[orden.col].localeCompare(b[orden.col]) * orden.dir;
-        return (a[orden.col] - b[orden.col]) * orden.dir;
+        return ((a[orden.col] ?? 0) - (b[orden.col] ?? 0)) * orden.dir;
       });
-  }, [vuelosActivos, orden, filtroOrigen, filtroDestino]);
+  }, [vuelosActivos, orden, filtroOrigen, filtroDestino, filtroSemaforoV]);
+
+  const hayFiltroActivoV = !!(filtroOrigen || filtroDestino || filtroSemaforoV);
+  useEffect(() => {
+    if (!onFiltrados) return;
+    onFiltrados(hayFiltroActivoV ? ordenado.map(v => v.key) : null);
+  }, [ordenado, hayFiltroActivoV]);
 
   const [expandido, setExpandido] = useState<string | null>(null);
 
@@ -313,6 +328,13 @@ function DrawerVuelos({ resultado, minutosVirtualesTotales, fechaInicio, onSelec
       <div className="px-4 py-3 border-b border-slate-700 flex items-center justify-between shrink-0">
         <h3 className="text-white font-bold text-sm">✈ En el aire ahora ({ordenado.length}{ordenado.length !== vuelosActivos.length ? `/${vuelosActivos.length}` : ''})</h3>
         <div className="flex items-center gap-2">
+          {/* Semáforo vuelos */}
+          {(['vacio','verde','amarillo','rojo'] as const).map(s => (
+            <button key={s} onClick={() => setFiltroSemaforoV(f => f === s ? '' : s)}
+              title={s === 'vacio' ? 'Sin maletas' : s.charAt(0).toUpperCase() + s.slice(1)}
+              className={`w-4 h-4 rounded-full border-2 transition-all ${filtroSemaforoV === s ? 'border-white scale-110' : 'border-transparent opacity-60 hover:opacity-100'} ${s === 'vacio' ? 'bg-slate-500' : s === 'verde' ? 'bg-green-500' : s === 'amarillo' ? 'bg-yellow-400' : 'bg-red-500'}`} />
+          ))}
+          <div className="w-px h-4 bg-slate-600" />
           <button onClick={() => setFiltrosAbiertos(v => !v)}
             className={`text-[10px] px-2 py-0.5 rounded border transition-colors ${filtrosAbiertos || filtroOrigen || filtroDestino ? 'border-tasf-green bg-tasf-green/20 text-tasf-green' : 'border-slate-600 text-slate-400 hover:text-white hover:border-slate-400'}`}>
             ⚙ {filtrosAbiertos ? '▲' : '▼'}{(filtroOrigen || filtroDestino) ? ' •' : ''}
@@ -352,25 +374,28 @@ function DrawerVuelos({ resultado, minutosVirtualesTotales, fechaInicio, onSelec
       <div className="px-3 py-1 border-b border-slate-700 shrink-0">
         <p className="text-[9px] text-slate-500 italic">👆 Haz clic en una fila para ver los envíos consolidados</p>
       </div>
-      <div className="overflow-y-auto flex-1">
-        <table className="w-full text-[11px] text-white">
+      <div className="overflow-auto flex-1">
+        <table className="w-full text-[11px] text-white min-w-[600px]">
           <thead className="sticky top-0 bg-slate-800 text-[9px] uppercase tracking-wider z-10">
             <tr>
-              <th className="px-3 py-2 text-left text-slate-400 w-6"></th>
-              <th className="px-3 py-2 text-left text-slate-400">ID Vuelo</th>
-              <th className={thClass('origen')} onClick={() => toggleOrden('origen')}>Origen{indicator('origen')}</th>
-              <th className={thClass('destino')} onClick={() => toggleOrden('destino')}>Destino{indicator('destino')}</th>
-              <th className={thClass('cant')} onClick={() => toggleOrden('cant')}>Ocupación{indicator('cant')}</th>
-              <th className={thClass('minSalida')} onClick={() => toggleOrden('minSalida')}>Hora Salida{indicator('minSalida')}</th>
-              <th className={thClass('minLlegada')} onClick={() => toggleOrden('minLlegada')}>Hora Llegada{indicator('minLlegada')}</th>
+              <th className="px-2 py-2 text-left text-slate-400 w-6"></th>
+              <th className="px-2 py-2 text-left text-slate-400 whitespace-nowrap">ID Vuelo</th>
+              <th className={thClass('origen')} onClick={() => toggleOrden('origen')}>Orig{indicator('origen')}</th>
+              <th className={thClass('destino')} onClick={() => toggleOrden('destino')}>Dest{indicator('destino')}</th>
+              <th className={thClass('cant')} onClick={() => toggleOrden('cant')}>Ocup.{indicator('cant')}</th>
+              <th className={thClass('cap')} onClick={() => toggleOrden('cap')}>Cap.{indicator('cap')}</th>
+              <th className={thClass('pct')} onClick={() => toggleOrden('pct')}>% Ocup{indicator('pct')}</th>
+              <th className={thClass('minSalida')} onClick={() => toggleOrden('minSalida')}>Salida{indicator('minSalida')}</th>
+              <th className={thClass('minLlegada')} onClick={() => toggleOrden('minLlegada')}>Llegada{indicator('minLlegada')}</th>
             </tr>
           </thead>
           <tbody>
             {ordenado.length === 0 ? (
-              <tr><td colSpan={7} className="text-center text-slate-500 py-8 italic">Sin vuelos activos</td></tr>
+              <tr><td colSpan={9} className="text-center text-slate-500 py-8 italic">Sin vuelos activos</td></tr>
             ) : ordenado.map((v: any) => {
               const abierto = expandido === v.key;
               const enviosDelVuelo = enviosPorVueloKey[v.key] ?? [];
+              const semaforoClass = v.cant === 0 ? 'bg-slate-500/20 text-slate-400 border border-slate-500/40' : v.pct >= 80 ? 'bg-red-500/20 text-red-400 border border-red-500/40' : v.pct >= 50 ? 'bg-yellow-500/20 text-yellow-400 border border-yellow-500/40' : 'bg-green-500/20 text-green-400 border border-green-500/40';
               return (
                 <React.Fragment key={v.key}>
                   <tr
@@ -385,14 +410,18 @@ function DrawerVuelos({ resultado, minutosVirtualesTotales, fechaInicio, onSelec
                     <td className="px-2 py-2 font-bold">{v.origen}</td>
                     <td className="px-2 py-2 font-bold">{v.destino}</td>
                     <td className="px-2 py-2 text-center">
-                      <span className="bg-yellow-500/20 text-yellow-400 font-bold px-1.5 py-0.5 rounded text-[10px]">{v.cant} mal.</span>
+                      <span className={`font-bold px-1.5 py-0.5 rounded text-[10px] ${semaforoClass}`}>{v.cant} mal.</span>
+                    </td>
+                    <td className="px-2 py-2 text-slate-300 font-mono text-center">{v.cap}</td>
+                    <td className="px-2 py-2 text-center">
+                      <span className={`font-bold px-1.5 py-0.5 rounded text-[10px] ${semaforoClass}`}>{v.pct}%</span>
                     </td>
                     <td className="px-2 py-2 text-tasf-green font-mono">{v.horaSalida}</td>
                     <td className="px-2 py-2 font-mono text-slate-300">{v.horaLlegada}</td>
                   </tr>
                   {abierto && (
                     <tr className="border-b border-slate-700">
-                      <td colSpan={7} className="bg-slate-900 px-0 py-0">
+                      <td colSpan={9} className="bg-slate-900 px-0 py-0">
                         <div className="px-4 py-3">
                           <p className="text-[10px] font-bold text-tasf-green mb-2">
                             📦 Envíos consolidados en la UT: {v.origen}-{v.destino}-{v.horaSalida}
@@ -441,17 +470,19 @@ function DrawerVuelos({ resultado, minutosVirtualesTotales, fechaInicio, onSelec
   );
 }
 
-function DrawerAlmacenes({ resultado, minutosVirtualesTotales, fechaInicioSim, onCerrar, onSeleccionarAeropuerto, ocupacionAeropuertosRT, aeropuertoExpandir }: {
+function DrawerAlmacenes({ resultado, minutosVirtualesTotales, fechaInicioSim, onCerrar, onSeleccionarAeropuerto, ocupacionAeropuertosRT, aeropuertoExpandir, onFiltrados }: {
   resultado: any; minutosVirtualesTotales: number; fechaInicioSim: string; onCerrar: () => void;
   onSeleccionarAeropuerto: (codigo: string) => void;
   ocupacionAeropuertosRT: Record<string, number>;
   aeropuertoExpandir?: string | null;
+  onFiltrados?: (codigos: string[] | null) => void;
 }) {
   type Col = 'codigo'|'ocupacion'|'capacidad'|'pct'|'enviosEnAlmacen'|'maletasEnAlmacen'|'enviosEnCamino'|'maletasEnCamino';
   const [orden, setOrden] = useState<{ col: Col; dir: 1|-1 }>({ col: 'pct', dir: -1 });
   const [expandido, setExpandido] = useState<string | null>(null);
   const [filtroContinente, setFiltroContinente] = useState('');
   const [filtroAeropuerto, setFiltroAeropuerto] = useState('');
+  const [filtroSemaforo, setFiltroSemaforo] = useState<''|'verde'|'amarillo'|'rojo'|'vacio'>('');
   const filaRefs = useRef<Map<string, HTMLTableRowElement>>(new Map());
 
   useEffect(() => {
@@ -560,11 +591,21 @@ function DrawerAlmacenes({ resultado, minutosVirtualesTotales, fechaInicioSim, o
     let filas = [...almacenes.filas];
     if (filtroContinente) filas = filas.filter(a => (aeropuertoContinente[a.codigo] ?? '') === filtroContinente);
     if (filtroAeropuerto) filas = filas.filter(a => a.codigo === filtroAeropuerto);
+    if (filtroSemaforo === 'vacio') filas = filas.filter(a => a.ocupacion === 0);
+    else if (filtroSemaforo === 'verde') filas = filas.filter(a => a.ocupacion > 0 && a.pct < 50);
+    else if (filtroSemaforo === 'amarillo') filas = filas.filter(a => a.pct >= 50 && a.pct < 80);
+    else if (filtroSemaforo === 'rojo') filas = filas.filter(a => a.pct >= 80);
     return filas.sort((a, b) => {
       if (orden.col === 'codigo') return a.codigo.localeCompare(b.codigo) * orden.dir;
       return ((a[orden.col] as number) - (b[orden.col] as number)) * orden.dir;
     });
-  }, [almacenes, orden, filtroContinente, filtroAeropuerto]);
+  }, [almacenes, orden, filtroContinente, filtroAeropuerto, filtroSemaforo]);
+
+  const hayFiltroActivo = !!(filtroContinente || filtroAeropuerto || filtroSemaforo);
+  useEffect(() => {
+    if (!onFiltrados) return;
+    onFiltrados(hayFiltroActivo ? ordenados.map(a => a.codigo) : null);
+  }, [ordenados, hayFiltroActivo]);
 
   const thC = (col: Col) =>
     `px-3 py-2 text-left cursor-pointer select-none hover:text-white transition-colors whitespace-nowrap ${orden.col === col ? 'text-tasf-green' : 'text-slate-400'}`;
@@ -581,7 +622,14 @@ function DrawerAlmacenes({ resultado, minutosVirtualesTotales, fechaInicioSim, o
     <>
       <div className="px-4 py-3 border-b border-slate-700 flex items-center justify-between shrink-0">
         <h3 className="text-white font-bold text-sm">🏭 Almacenes ({ordenados.length}{filtroContinente ? `/${almacenes.filas.length}` : ''})</h3>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap justify-end">
+          {/* Semáforo */}
+          {(['vacio','verde','amarillo','rojo'] as const).map(s => (
+            <button key={s} onClick={() => setFiltroSemaforo(f => f === s ? '' : s)}
+              title={s === 'vacio' ? 'Sin maletas' : s.charAt(0).toUpperCase() + s.slice(1)}
+              className={`w-5 h-5 rounded-full border-2 transition-all ${filtroSemaforo === s ? 'border-white scale-110' : 'border-transparent opacity-60 hover:opacity-100'} ${s === 'vacio' ? 'bg-slate-500' : s === 'verde' ? 'bg-green-500' : s === 'amarillo' ? 'bg-yellow-400' : 'bg-red-500'}`} />
+          ))}
+          <div className="w-px h-5 bg-slate-600" />
           <select
             value={filtroContinente}
             onChange={e => { setFiltroContinente(e.target.value); setFiltroAeropuerto(''); setExpandido(null); }}
@@ -603,8 +651,8 @@ function DrawerAlmacenes({ resultado, minutosVirtualesTotales, fechaInicioSim, o
               placeholder="Todos los aeropuertos"
             />
           </div>
-          {(filtroContinente || filtroAeropuerto) && (
-            <button onClick={() => { setFiltroContinente(''); setFiltroAeropuerto(''); setExpandido(null); }}
+          {hayFiltroActivo && (
+            <button onClick={() => { setFiltroContinente(''); setFiltroAeropuerto(''); setFiltroSemaforo(''); setExpandido(null); }}
               className="text-[10px] text-slate-400 hover:text-white px-2 py-1 rounded bg-slate-700 hover:bg-slate-600 transition-colors">✕</button>
           )}
           <button onClick={onCerrar} className="text-slate-400 hover:text-white text-lg leading-none">✕</button>
@@ -783,11 +831,13 @@ function DrawerEnvios({ resultado, minutosVirtualesTotales, fechaInicioSim, onCe
           if (e === 'vuelo') {
             hayVuelo = true; todosCompletos = false;
             vueloKey = `${v.origen}-${v.destino}-${normH(v.horaSalida??'')}_${fechaSalida}`;
+            aeropuerto = v.origen; // fallback: almacén de origen si el avión no se ve en mapa
             break;
           }
           if (e === 'espera') {
             todosCompletos = false;
             if (!aeropuerto) aeropuerto = v.origen;
+            break; // tramos posteriores no aplican hasta que éste complete
           }
         }
         if (!hayVuelo && todosCompletos) aeropuerto = tramos[tramos.length - 1]?.destino ?? null;
@@ -938,44 +988,20 @@ function DrawerEnvios({ resultado, minutosVirtualesTotales, fechaInicioSim, onCe
                 <td className="px-2 py-2 font-bold">{e.origen}</td>
                 <td className="px-2 py-2 font-bold">{e.destino}</td>
                 <td className="px-2 py-2 text-center">
-                  <div className="flex items-center gap-1 justify-center">
-                    {tab === 'vuelo' && e.vueloKey && (
-                      <>
-                        {onEnfocarVuelo && (
-                          <button onClick={() => onEnfocarVuelo(e.vueloKey)}
-                            title="Enfocar en mapa"
-                            className="text-slate-300 hover:text-white text-[11px] px-1.5 py-0.5 rounded bg-slate-700 hover:bg-slate-600 transition-colors">
-                            📍
-                          </button>
-                        )}
-                        {onVerVuelo && (
-                          <button onClick={() => onVerVuelo(e.vueloKey)}
-                            title="Ver en panel de vuelos"
-                            className="text-tasf-green hover:text-green-400 text-[11px] px-1.5 py-0.5 rounded bg-tasf-green/10 hover:bg-tasf-green/20 transition-colors">
-                            ✈
-                          </button>
-                        )}
-                      </>
-                    )}
-                    {(tab === 'espera' || tab === 'completado') && e.aeropuerto && (
-                      <>
-                        {onEnfocarAlmacen && (
-                          <button onClick={() => onEnfocarAlmacen(e.aeropuerto)}
-                            title="Enfocar en mapa"
-                            className="text-slate-300 hover:text-white text-[11px] px-1.5 py-0.5 rounded bg-slate-700 hover:bg-slate-600 transition-colors">
-                            📍
-                          </button>
-                        )}
-                        {onVerAlmacen && (
-                          <button onClick={() => onVerAlmacen(e.aeropuerto)}
-                            title="Ver en panel de almacenes"
-                            className="text-blue-400 hover:text-blue-300 text-[11px] px-1.5 py-0.5 rounded bg-blue-400/10 hover:bg-blue-400/20 transition-colors">
-                            🏭
-                          </button>
-                        )}
-                      </>
-                    )}
-                  </div>
+                  {tab === 'vuelo' && e.vueloKey && onVerVuelo && (
+                    <button onClick={() => onVerVuelo(e.vueloKey!)}
+                      title="Ver vuelo en mapa y panel"
+                      className="text-tasf-green hover:text-green-400 text-[11px] px-1.5 py-0.5 rounded bg-tasf-green/10 hover:bg-tasf-green/20 transition-colors">
+                      ✈ Ver
+                    </button>
+                  )}
+                  {(tab === 'espera' || tab === 'completado') && e.aeropuerto && onVerAlmacen && (
+                    <button onClick={() => onVerAlmacen(e.aeropuerto!)}
+                      title="Ver almacén en mapa y panel"
+                      className="text-blue-400 hover:text-blue-300 text-[11px] px-1.5 py-0.5 rounded bg-blue-400/10 hover:bg-blue-400/20 transition-colors">
+                      🏭 Ver
+                    </button>
+                  )}
                 </td>
               </tr>
             ))}
@@ -1236,6 +1262,8 @@ function App() {
   const [panelEnviosAbierto, setPanelEnviosAbierto] = useState(false);
   const [panelAlmacenesAbierto, setPanelAlmacenesAbierto] = useState(false);
   const [aeropuertoResaltado, setAeropuertoResaltado] = useState<string | null>(null);
+  const [aeropuertosFiltrados, setAeropuertosFiltrados] = useState<string[] | null>(null);
+  const [vuelosFiltrados, setVuelosFiltrados] = useState<string[] | null>(null);
   const [modoOscuro, setModoOscuro] = useState(true);
   const inicioRealRef = useRef<number | null>(null);
 
@@ -1733,7 +1761,9 @@ function App() {
                 />
               )}
               <MapArea solucion={resultado} progreso={porcentajeSimulacion} modoOscuro={modoOscuro} horaVirtualMinutos={horaVirtualMinutos} minutosVirtualesTotales={minutosVirtualesTotales} fechaInicioSim={fechaInicio} vueloResaltado={vueloResaltado} onVueloResaltadoClear={() => setVueloResaltado(null)} aeropuertoResaltado={aeropuertoResaltado} ocupacionAeropuertosRT={ocupacionAeropuertosRT} onAeropuertoClick={(cod) => { setAeropuertoResaltado(cod); setPanelAlmacenesAbierto(true); setPanelEnviosAbierto(false); setPanelVuelosAbierto(false); }}
-                onVueloClick={(key) => { setVueloResaltado(key); setPanelVuelosAbierto(true); setPanelEnviosAbierto(false); setPanelAlmacenesAbierto(false); }} />
+                onVueloClick={(key) => { setVueloResaltado(key); setPanelVuelosAbierto(true); setPanelEnviosAbierto(false); setPanelAlmacenesAbierto(false); }}
+                aeropuertosFiltrados={panelAlmacenesAbierto ? aeropuertosFiltrados : null}
+                vuelosFiltrados={panelVuelosAbierto ? vuelosFiltrados : null} />
 
               {/* Overlay procesando primer bloque */}
               {procesandoPrimerBloque && (
@@ -1755,10 +1785,11 @@ function App() {
                     resultado={resultado}
                     minutosVirtualesTotales={minutosVirtualesTotales}
                     fechaInicioSim={fechaInicio}
-                    onCerrar={() => setPanelAlmacenesAbierto(false)}
+                    onCerrar={() => { setPanelAlmacenesAbierto(false); setAeropuertosFiltrados(null); }}
                     onSeleccionarAeropuerto={setAeropuertoResaltado}
                     ocupacionAeropuertosRT={ocupacionAeropuertosRT}
                     aeropuertoExpandir={aeropuertoResaltado}
+                    onFiltrados={setAeropuertosFiltrados}
                   />
                 )}
               </div>
@@ -1775,20 +1806,22 @@ function App() {
                     onEnfocarAlmacen={(cod) => { setAeropuertoResaltado(cod); }}
                     onVerVuelo={(key) => { setVueloResaltado(key); setPanelVuelosAbierto(true); setPanelEnviosAbierto(false); setPanelAlmacenesAbierto(false); }}
                     onVerAlmacen={(cod) => { setAeropuertoResaltado(cod); setPanelAlmacenesAbierto(true); setPanelEnviosAbierto(false); setPanelVuelosAbierto(false); }}
+
                   />
                 )}
               </div>
 
               {/* Drawer lateral de vuelos activos */}
-              <div className={`absolute top-0 right-0 h-full z-[999] bg-slate-900 border-l border-slate-700 shadow-2xl flex flex-col transition-all duration-300 ${panelVuelosAbierto ? "w-[460px]" : "w-0 overflow-hidden"}`}>
+              <div className={`absolute top-0 right-0 h-full z-[999] bg-slate-900 border-l border-slate-700 shadow-2xl flex flex-col transition-all duration-300 ${panelVuelosAbierto ? "w-[640px]" : "w-0 overflow-hidden"}`}>
                 {panelVuelosAbierto && (
                   <DrawerVuelos
                     resultado={resultado}
                     minutosVirtualesTotales={minutosVirtualesTotales}
                     fechaInicio={fechaInicio}
                     onSeleccionar={(key) => { setVueloResaltado(key); }}
-                    onCerrar={() => setPanelVuelosAbierto(false)}
+                    onCerrar={() => { setPanelVuelosAbierto(false); setVuelosFiltrados(null); }}
                     vueloExpandir={vueloResaltado}
+                    onFiltrados={setVuelosFiltrados}
                   />
                 )}
               </div>
