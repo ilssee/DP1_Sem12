@@ -112,6 +112,7 @@ const calcularProgresoTotal = (
 
 export default function MapArea({ solucion, progreso, modoOscuro = true, horaVirtualMinutos = 0, minutosVirtualesTotales, fechaInicioSim = "2026-01-05", vueloResaltado, onVueloResaltadoClear, aeropuertoResaltado, ocupacionAeropuertosRT = {} }: MapAreaProps) {
   const [vueloSeleccionado, setVueloSeleccionado] = useState<string | null>(null);
+  const [mostrarVacíos, setMostrarVacíos] = useState(false);
   const markerRefs = useRef<Map<string, L.Marker>>(new Map());
   const aeroMarkerRefs = useRef<Map<string, L.Marker>>(new Map());
 
@@ -212,6 +213,7 @@ export default function MapArea({ solucion, progreso, modoOscuro = true, horaVir
 
     const minutosActuales = minutosVirtualesTotales ?? horaVirtualMinutos;
     rutasVisuales.forEach((vuelo) => {
+      if (!mostrarVacíos && vuelo.cantidad === 0) return;
       const progresoReal = vuelo.fechaSalida && minutosVirtualesTotales !== undefined
         ? calcularProgresoTotal(vuelo.fechaSalida, vuelo.horaSalida, vuelo.horaLlegada, fechaInicioSim, minutosActuales)
         : -1;
@@ -267,7 +269,7 @@ export default function MapArea({ solucion, progreso, modoOscuro = true, horaVir
     });
 
     return { avionesEnPantalla, posicionResaltado };
-  }, [rutasVisuales, Math.floor(minutosVirtualesTotales), vueloSeleccionado]);
+  }, [rutasVisuales, Math.floor(minutosVirtualesTotales), vueloSeleccionado, mostrarVacíos]);
 
   // Línea de ruta para el vuelo seleccionado
   const lineaRuta = useMemo(() => {
@@ -303,9 +305,18 @@ export default function MapArea({ solucion, progreso, modoOscuro = true, horaVir
     );
   }, [vueloSeleccionado, rutasVisuales, minutosVirtualesTotales, horaVirtualMinutos]);
 
-  // Ocupación en tiempo real por aeropuerto
-
   return (
+    <div style={{ position: 'relative', height: '100%', width: '100%' }}>
+      {/* Botón flotante vuelos vacíos */}
+      <button
+        onClick={() => setMostrarVacíos(v => !v)}
+        style={{ position: 'absolute', bottom: 24, left: 12, zIndex: 1000 }}
+        className={`flex items-center gap-1.5 text-[11px] font-bold px-3 py-1.5 rounded-lg shadow-lg border transition-colors ${mostrarVacíos ? 'bg-slate-600 border-slate-400 text-white' : 'bg-slate-900/90 border-slate-600 text-slate-400 hover:text-white hover:border-slate-400'}`}
+      >
+        <span style={{ display: 'inline-block', width: 10, height: 10, borderRadius: '50%', background: '#64748b' }} />
+        {mostrarVacíos ? 'Ocultar vuelos vacíos' : 'Mostrar vuelos vacíos'}
+      </button>
+
     <MapContainer
       preferCanvas={true}
       center={[30, 0]}
@@ -375,5 +386,6 @@ export default function MapArea({ solucion, progreso, modoOscuro = true, horaVir
       {lineaRuta}
       {elementosMapa.avionesEnPantalla}
     </MapContainer>
+    </div>
   );
 }

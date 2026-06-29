@@ -78,7 +78,7 @@ function WidgetTiempos({ horaRealActual, tiempoTranscurrido, tiempoSimuladoTrans
 }) {
   const [abierto, setAbierto] = React.useState(true);
   return (
-    <div className="absolute top-3 left-3 z-[1000] w-80 rounded-2xl shadow-2xl bg-slate-900 border border-slate-700 overflow-hidden">
+    <div className="absolute top-3 left-12 z-[1000] w-80 rounded-2xl shadow-2xl bg-slate-900 border border-slate-700 overflow-hidden">
       {/* MOMENTO PRESENTE */}
       <button onClick={() => setAbierto(v => !v)} className="w-full px-4 pt-3 pb-2 flex items-center justify-between hover:bg-slate-800 transition-colors">
         <p className="text-[10px] font-bold text-slate-300 uppercase tracking-widest flex items-center gap-1.5">
@@ -1016,6 +1016,7 @@ function App() {
   const [cargando, setCargando] = useState(false);
   const [resultado, setResultado] = useState<Solucion | null>(null);
   const [simulandoEnVivo, setSimulandoEnVivo] = useState(false);
+  const [procesandoPrimerBloque, setProcesandoPrimerBloque] = useState(false);
   const [porcentajeSimulacion, setPorcentajeSimulacion] = useState(0);
   const [tiempoTranscurrido, setTiempoTranscurrido] = useState("00:00:00");
   const [ventanaVirtual, setVentanaVirtual] = useState<string | null>(null);
@@ -1117,6 +1118,7 @@ function App() {
         }
 
         if (estadoJob.solucionParcial) {
+          setProcesandoPrimerBloque(false);
           setResultado((prev) => {
             const nueva = estadoJob.solucionParcial!;
             // Preservar rutas/ocupaciones del paso anterior si el nuevo bloque llega vacío
@@ -1266,6 +1268,7 @@ function App() {
 
       setCargando(false);
       setSimulandoEnVivo(true);
+      setProcesandoPrimerBloque(true);
 
       iniciarPolling(jobId, fechaInicio);
     } catch (error: any) {
@@ -1413,15 +1416,16 @@ function App() {
         <div
           className={`w-full h-full flex ${vistaActiva === "mapa" ? "flex" : "hidden"}`}
         >
-          <aside className={`${sidebarAbierto ? "w-80" : "w-10"} bg-slate-900 text-white flex flex-col shadow-xl z-30 transition-all duration-300 overflow-hidden`}>
+          <aside className={`relative ${sidebarAbierto ? "w-80" : "w-0"} bg-slate-900 text-white flex flex-col shadow-xl z-30 transition-all duration-300 overflow-visible`}>
+            {/* Pestaña en el borde derecho */}
             <button
               onClick={() => setSidebarAbierto(!sidebarAbierto)}
-              className="w-full flex items-center justify-center py-3 text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+              className="absolute -right-6 top-1/2 -translate-y-1/2 w-6 h-14 bg-slate-800 border border-slate-600 border-l-0 rounded-r-lg flex items-center justify-center text-slate-400 hover:text-white hover:bg-slate-700 transition-colors z-40 shadow-md"
               title={sidebarAbierto ? "Colapsar panel" : "Expandir panel"}
             >
-              {sidebarAbierto ? "◀" : "▶"}
+              <span className="text-[10px]">{sidebarAbierto ? "◀" : "▶"}</span>
             </button>
-            <div className={`p-6 flex-1 ${sidebarAbierto ? "block" : "hidden"}`}>
+            <div className={`p-6 flex-1 overflow-y-auto ${sidebarAbierto ? "block" : "hidden"}`}>
               <h2 className="text-xs uppercase text-slate-400 font-semibold mb-6 tracking-widest">
                 Parámetros de Simulación
               </h2>
@@ -1506,6 +1510,18 @@ function App() {
                 />
               )}
               <MapArea solucion={resultado} progreso={porcentajeSimulacion} modoOscuro={modoOscuro} horaVirtualMinutos={horaVirtualMinutos} minutosVirtualesTotales={minutosVirtualesTotales} fechaInicioSim={fechaInicio} vueloResaltado={vueloResaltado} onVueloResaltadoClear={() => setVueloResaltado(null)} aeropuertoResaltado={aeropuertoResaltado} ocupacionAeropuertosRT={ocupacionAeropuertosRT} />
+
+              {/* Overlay procesando primer bloque */}
+              {procesandoPrimerBloque && (
+                <div className="absolute inset-0 z-[2000] flex flex-col items-center justify-center backdrop-blur-sm bg-slate-900/70">
+                  <div className="bg-slate-800 border border-slate-600 rounded-2xl px-10 py-8 flex flex-col items-center gap-4 shadow-2xl">
+                    <div className="w-10 h-10 border-4 border-tasf-green border-t-transparent rounded-full animate-spin" />
+                    <p className="text-white font-bold text-lg">Procesando simulación</p>
+                    <p className="text-slate-400 text-sm">Ejecutando Tabu Search del primer bloque...</p>
+                    <p className="text-slate-500 text-xs">Esto puede tomar unos segundos</p>
+                  </div>
+                </div>
+              )}
 
               {/* Botones flotantes */}
               {resultado && (
