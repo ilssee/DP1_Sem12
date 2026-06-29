@@ -47,6 +47,17 @@ const formatearDuracion = (ms: number): string => {
 
 function parseHoraAMin(h: string) { const [hh, mm] = h.split(":").map(Number); return hh * 60 + mm; }
 
+function minLlegadaDesdeInicio(fechaSalidaStr: string, horaSalida: string, horaLlegada: string, fechaInicioSim: string): number {
+  const [fy, fm, fd] = fechaInicioSim.split("-").map(Number);
+  const [vy, vm, vd] = fechaSalidaStr.split("-").map(Number);
+  if (isNaN(fy) || isNaN(vy)) return Infinity;
+  const dias = Math.floor((new Date(vy, vm-1, vd).getTime() - new Date(fy, fm-1, fd).getTime()) / 86400000);
+  const minSalida = dias * 1440 + parseHoraAMin(horaSalida);
+  let minLlegada = dias * 1440 + parseHoraAMin(horaLlegada);
+  if (minLlegada <= minSalida) minLlegada += 1440;
+  return minLlegada;
+}
+
 function clasificarVuelo(fechaSalidaStr: string, horaSalida: string, horaLlegada: string, fechaInicioSim: string, minutosActuales: number) {
   if (!fechaSalidaStr || !horaSalida || !fechaInicioSim) return 'espera';
   const [fy, fm, fd] = fechaInicioSim.split("-").map(Number);
@@ -339,11 +350,12 @@ function DrawerVuelos({ resultado, minutosVirtualesTotales, fechaInicio, onSelec
   );
 }
 
-function DrawerAlmacenes({ resultado, minutosVirtualesTotales, fechaInicioSim, onCerrar, onSeleccionarAeropuerto }: {
+function DrawerAlmacenes({ resultado, minutosVirtualesTotales, fechaInicioSim, onCerrar, onSeleccionarAeropuerto, ocupacionAeropuertosRT }: {
   resultado: any; minutosVirtualesTotales: number; fechaInicioSim: string; onCerrar: () => void;
   onSeleccionarAeropuerto: (codigo: string) => void;
+  ocupacionAeropuertosRT: Record<string, number>;
 }) {
-  type Col = 'codigo'|'ocupacion'|'capacidad'|'pct'|'enviosEntran'|'maletasEntran'|'enviosSalen'|'maletasSalen';
+  type Col = 'codigo'|'ocupacion'|'capacidad'|'pct'|'enviosEnAlmacen'|'maletasEnAlmacen'|'enviosEnCamino'|'maletasEnCamino';
   const [orden, setOrden] = useState<{ col: Col; dir: 1|-1 }>({ col: 'pct', dir: -1 });
   const [expandido, setExpandido] = useState<string | null>(null);
 
@@ -356,53 +368,56 @@ function DrawerAlmacenes({ resultado, minutosVirtualesTotales, fechaInicioSim, o
             enviosPorAero: {},
         };
     }
-    const ocupacionAero = resultado.ocupacionAeropuertos ?? {};
     const capacidadesAero = resultado.capacidadesAeropuertos ?? {};
     const detalles = resultado.detallesEnvios ?? {};
     const rutasAsignadas = resultado.rutasAsignadas ?? {};
-    const ocupacionVuelos = resultado.ocupacionVuelos ?? {};
 
-    // Sumar ocupación por aeropuerto (agrupa todas las fechas)
-    const ocupPorAero: Record<string, number> = {};
-    Object.entries(ocupacionAero as Record<string, number>).forEach(([key, cant]) => {
-      const base = key.split('_')[0];
-      ocupPorAero[base] = (ocupPorAero[base] ?? 0) + cant;
-    });
+    const ocupPorAero: Record<string, number> = ocupacionAeropuertosRT;
 
-    // Pre-construir lookup "ORIG-DEST-HH:MM" → fechaSalida — O(k) una vez, evita O(n×m×k)
-    const tramoClaveFecha = new Map<string, string>();
-    Object.keys(ocupacionVuelos).forEach(k => {
-      const idx = k.lastIndexOf('_');
-      if (idx === -1) return;
-      const sinFecha = k.substring(0, idx);
-      const fecha = k.substring(idx + 1);
-      const partes = sinFecha.split('-');
-      if (partes.length >= 3) {
-        tramoClaveFecha.set(`${partes[0]}-${partes[1]}-${normH(partes[2])}`, fecha);
-      }
-    });
+    const fechasTramos = (resultado as any).fechasTramos ?? {};
 
-    const enviosPorAero: Record<string, { entran: { id: string; idCliente: string; maletas: number; origen: string; destino: string }[]; salen: { id: string; idCliente: string; maletas: number; origen: string; destino: string }[] }> = {};
+    type ItemEnvio = { id: string; idCliente: string; maletas: number; origen: string; destino: string; tipo: 'transito' | 'final' };
+    const enviosPorAero: Record<string, { enAlmacen: ItemEnvio[]; enCamino: ItemEnvio[] }> = {};
     const asegurar = (cod: string) => {
-      if (!enviosPorAero[cod]) enviosPorAero[cod] = { entran: [], salen: [] };
+      if (!enviosPorAero[cod]) enviosPorAero[cod] = { enAlmacen: [], enCamino: [] };
     };
 
     Object.entries(detalles as Record<string, any>).forEach(([id, detalle]) => {
       const tramos: any[] = rutasAsignadas[id] ?? [];
+      const fechas: string[] = fechasTramos[id] ?? [];
       const mal = detalle.cantidadMaletas;
-      const item = { id, idCliente: detalle.idCliente, maletas: mal, origen: detalle.origen, destino: detalle.destino };
-      tramos.forEach((v: any) => {
-        const clave = `${v.origen}-${v.destino}-${normH(v.horaSalida??'')}`;
-        const fechaSalida = tramoClaveFecha.get(clave);
+
+      tramos.forEach((v: any, i: number) => {
+        const fechaSalida = fechas[i];
         if (!fechaSalida) return;
-        const estadoTramo = clasificarVuelo(fechaSalida, normH(v.horaSalida), normH(v.horaLlegada), fechaInicioSim, minutosVirtualesTotales);
-        if (estadoTramo === 'vuelo') {
+        const estado = clasificarVuelo(fechaSalida, normH(v.horaSalida??''), normH(v.horaLlegada??''), fechaInicioSim, minutosVirtualesTotales);
+
+        const esUltimoTramo = i === tramos.length - 1;
+        const tramoAnteriorOk = i === 0 || (() => {
+          const fa = fechas[i - 1];
+          if (!fa) return false;
+          return clasificarVuelo(fa, normH(tramos[i-1].horaSalida??''), normH(tramos[i-1].horaLlegada??''), fechaInicioSim, minutosVirtualesTotales) === 'completado';
+        })();
+
+        // En tránsito aéreo → en camino al destino (v.destino)
+        if (estado === 'vuelo') {
           asegurar(v.destino);
-          enviosPorAero[v.destino].entran.push(item);
+          enviosPorAero[v.destino].enCamino.push({ id, idCliente: detalle.idCliente, maletas: mal, origen: detalle.origen, destino: detalle.destino, tipo: 'transito' });
         }
-        if (estadoTramo === 'espera') {
+
+        // En espera con tramo anterior completado → físicamente en el almacén (tránsito)
+        if (estado === 'espera' && tramoAnteriorOk) {
           asegurar(v.origen);
-          enviosPorAero[v.origen].salen.push(item);
+          enviosPorAero[v.origen].enAlmacen.push({ id, idCliente: detalle.idCliente, maletas: mal, origen: detalle.origen, destino: detalle.destino, tipo: 'transito' });
+        }
+
+        // Último tramo completado → destino final, solo si el cliente aún no recogió (< 15 min desde llegada)
+        if (estado === 'completado' && esUltimoTramo) {
+          const minLlegada = minLlegadaDesdeInicio(fechaSalida, normH(v.horaSalida??''), normH(v.horaLlegada??''), fechaInicioSim);
+          if (minutosVirtualesTotales < minLlegada + 15) {
+            asegurar(v.destino);
+            enviosPorAero[v.destino].enAlmacen.push({ id, idCliente: detalle.idCliente, maletas: mal, origen: detalle.origen, destino: detalle.destino, tipo: 'final' });
+          }
         }
       });
     });
@@ -418,18 +433,18 @@ function DrawerAlmacenes({ resultado, minutosVirtualesTotales, fechaInicioSim, o
       const ocupacion = ocupPorAero[codigo] ?? 0;
       const capacidad = capacidadesAero[codigo] ?? 0;
       const pct = capacidad > 0 ? Math.round((ocupacion / capacidad) * 100) : 0;
-      const flujo = enviosPorAero[codigo] ?? { entran: [], salen: [] };
+      const flujo = enviosPorAero[codigo] ?? { enAlmacen: [], enCamino: [] };
       return {
         codigo,
         ocupacion,
         capacidad,
         pct,
-        enviosEntran: flujo.entran.length,
-        maletasEntran: flujo.entran.reduce((s, e) => s + e.maletas, 0),
-        enviosSalen: flujo.salen.length,
-        maletasSalen: flujo.salen.reduce((s, e) => s + e.maletas, 0),
-        detalleEntran: flujo.entran,
-        detalleSalen: flujo.salen,
+        enviosEnAlmacen: flujo.enAlmacen.length,
+        maletasEnAlmacen: flujo.enAlmacen.reduce((s, e) => s + e.maletas, 0),
+        enviosEnCamino: flujo.enCamino.length,
+        maletasEnCamino: flujo.enCamino.reduce((s, e) => s + e.maletas, 0),
+        detalleAlmacen: flujo.enAlmacen,
+        detalleCamino: flujo.enCamino,
       };
     });
     return { filas, enviosPorAero };
@@ -471,15 +486,14 @@ function DrawerAlmacenes({ resultado, minutosVirtualesTotales, fechaInicioSim, o
               <th className={thC('ocupacion')} onClick={() => tog('ocupacion')}>Ocup. Actual{ind('ocupacion')}</th>
               <th className={thC('capacidad')} onClick={() => tog('capacidad')}>Cap. Máx{ind('capacidad')}</th>
               <th className={thC('pct')} onClick={() => tog('pct')}>% Ocup{ind('pct')}</th>
-              <th className={thC('enviosEntran')} onClick={() => tog('enviosEntran')}>Envíos Entran{ind('enviosEntran')}</th>
-              <th className={thC('maletasEntran')} onClick={() => tog('maletasEntran')}>Mal. Entran{ind('maletasEntran')}</th>
-              <th className={thC('enviosSalen')} onClick={() => tog('enviosSalen')}>Envíos Salen{ind('enviosSalen')}</th>
-              <th className={thC('maletasSalen')} onClick={() => tog('maletasSalen')}>Mal. Salen{ind('maletasSalen')}</th>
+              <th className={thC('enviosEnAlmacen')} onClick={() => tog('enviosEnAlmacen')}>Envíos en Almacén{ind('enviosEnAlmacen')}</th>
+              <th className={thC('enviosEnCamino')} onClick={() => tog('enviosEnCamino')}>Envíos en Camino{ind('enviosEnCamino')}</th>
+              <th className={thC('maletasEnCamino')} onClick={() => tog('maletasEnCamino')}>Mal. en Camino{ind('maletasEnCamino')}</th>
             </tr>
           </thead>
           <tbody>
             {ordenados.length === 0 ? (
-              <tr><td colSpan={9} className="text-center text-slate-500 py-8 italic">Sin datos</td></tr>
+              <tr><td colSpan={8} className="text-center text-slate-500 py-8 italic">Sin datos</td></tr>
             ) : ordenados.map((a: any) => {
               const abierto = expandido === a.codigo;
               return (
@@ -490,33 +504,30 @@ function DrawerAlmacenes({ resultado, minutosVirtualesTotales, fechaInicioSim, o
                     <td className="px-2 py-2 text-slate-400 text-center">{abierto ? '▼' : '▶'}</td>
                     <td className="px-3 py-2 font-bold text-white font-mono text-sm">{a.codigo}</td>
                     <td className="px-3 py-2">
-                      <span className="bg-yellow-500/20 text-yellow-400 font-bold px-2 py-0.5 rounded text-[10px]">{a.ocupacion} mal.</span>
+                      <span className={`font-bold px-2 py-0.5 rounded text-[10px] ${semaforo(a.pct)}`}>{a.ocupacion} mal.</span>
                     </td>
                     <td className="px-3 py-2 text-slate-300 font-mono">{a.capacidad}</td>
                     <td className="px-3 py-2">
                       <span className={`font-bold px-2 py-0.5 rounded text-[10px] ${semaforo(a.pct)}`}>{a.pct}%</span>
                     </td>
                     <td className="px-3 py-2 text-center">
-                      <span className="bg-slate-700 text-slate-200 font-bold px-2 py-0.5 rounded text-[10px]">{a.enviosEntran} envíos</span>
+                      <span className="bg-slate-700 text-slate-200 font-bold px-2 py-0.5 rounded text-[10px]">{a.enviosEnAlmacen} envíos</span>
                     </td>
                     <td className="px-3 py-2 text-center">
-                      <span className="bg-tasf-green/20 text-tasf-green font-bold px-2 py-0.5 rounded text-[10px]">{a.maletasEntran} mal.</span>
+                      <span className="bg-slate-700 text-slate-200 font-bold px-2 py-0.5 rounded text-[10px]">{a.enviosEnCamino} envíos</span>
                     </td>
                     <td className="px-3 py-2 text-center">
-                      <span className="bg-slate-700 text-slate-200 font-bold px-2 py-0.5 rounded text-[10px]">{a.enviosSalen} envíos</span>
-                    </td>
-                    <td className="px-3 py-2 text-center">
-                      <span className="bg-yellow-500/20 text-yellow-400 font-bold px-2 py-0.5 rounded text-[10px]">{a.maletasSalen} mal.</span>
+                      <span className="bg-slate-700 text-slate-200 font-bold px-2 py-0.5 rounded text-[10px]">{a.maletasEnCamino} mal.</span>
                     </td>
                   </tr>
                   {abierto && (
                     <tr className="border-b border-slate-700">
-                      <td colSpan={9} className="bg-slate-900 px-0 py-0">
+                      <td colSpan={8} className="bg-slate-900 px-0 py-0">
                         <div className="px-4 py-3 flex gap-6">
-                          {/* Entran */}
+                          {/* En el almacén */}
                           <div className="flex-1">
-                            <p className="text-[10px] font-bold text-tasf-green mb-2">📥 Envíos que entran ({a.detalleEntran.length})</p>
-                            {a.detalleEntran.length === 0 ? <p className="text-slate-500 text-[10px] italic">Sin envíos</p> : (
+                            <p className="text-[10px] font-bold text-blue-300 mb-2">🏭 En el almacén ({a.detalleAlmacen.length})</p>
+                            {a.detalleAlmacen.length === 0 ? <p className="text-slate-500 text-[10px] italic">Sin envíos</p> : (
                               <table className="w-full text-[10px]">
                                 <thead><tr className="text-[9px] text-slate-500 border-b border-slate-700">
                                   <th className="pb-1 text-left">ID Envío</th>
@@ -524,15 +535,17 @@ function DrawerAlmacenes({ resultado, minutosVirtualesTotales, fechaInicioSim, o
                                   <th className="pb-1 text-left">Mal.</th>
                                   <th className="pb-1 text-left">Origen</th>
                                   <th className="pb-1 text-left">Destino</th>
+                                  <th className="pb-1 text-left">Tipo</th>
                                 </tr></thead>
                                 <tbody>
-                                  {a.detalleEntran.map((e: any, i: number) => (
+                                  {a.detalleAlmacen.map((e: any, i: number) => (
                                     <tr key={i} className="border-b border-slate-800 text-white">
                                       <td className="py-1 font-mono text-tasf-green">{e.id}</td>
                                       <td className="py-1 text-slate-300">{e.idCliente}</td>
                                       <td className="py-1"><span className={`font-bold px-1 rounded ${e.maletas >= 10 ? 'text-yellow-400' : 'text-tasf-green'}`}>{e.maletas}</span></td>
                                       <td className="py-1 font-bold">{e.origen}</td>
                                       <td className="py-1 font-bold">{e.destino}</td>
+                                      <td className="py-1">{e.tipo === 'final' ? <span className="text-tasf-green text-[9px] font-bold">DESTINO FINAL</span> : <span className="text-yellow-400 text-[9px] font-bold">TRÁNSITO</span>}</td>
                                     </tr>
                                   ))}
                                 </tbody>
@@ -540,10 +553,10 @@ function DrawerAlmacenes({ resultado, minutosVirtualesTotales, fechaInicioSim, o
                             )}
                           </div>
                           <div className="w-px bg-slate-700" />
-                          {/* Salen */}
+                          {/* En camino */}
                           <div className="flex-1">
-                            <p className="text-[10px] font-bold text-yellow-400 mb-2">📤 Envíos que salen ({a.detalleSalen.length})</p>
-                            {a.detalleSalen.length === 0 ? <p className="text-slate-500 text-[10px] italic">Sin envíos</p> : (
+                            <p className="text-[10px] font-bold text-slate-400 mb-2">✈️ En camino ({a.detalleCamino.length})</p>
+                            {a.detalleCamino.length === 0 ? <p className="text-slate-500 text-[10px] italic">Sin envíos</p> : (
                               <table className="w-full text-[10px]">
                                 <thead><tr className="text-[9px] text-slate-500 border-b border-slate-700">
                                   <th className="pb-1 text-left">ID Envío</th>
@@ -553,7 +566,7 @@ function DrawerAlmacenes({ resultado, minutosVirtualesTotales, fechaInicioSim, o
                                   <th className="pb-1 text-left">Destino</th>
                                 </tr></thead>
                                 <tbody>
-                                  {a.detalleSalen.map((e: any, i: number) => (
+                                  {a.detalleCamino.map((e: any, i: number) => (
                                     <tr key={i} className="border-b border-slate-800 text-white">
                                       <td className="py-1 font-mono text-tasf-green">{e.id}</td>
                                       <td className="py-1 text-slate-300">{e.idCliente}</td>
@@ -596,43 +609,48 @@ function DrawerEnvios({ resultado, minutosVirtualesTotales, fechaInicioSim, onCe
 
   const normH = (t: string) => { const p = (t ?? '').split(':'); return `${p[0].padStart(2,'0')}:${(p[1]??'00').padStart(2,'0')}:${(p[2]??'00').padStart(2,'0')}`; };
 
-  const grupos = useMemo(() => {
+  // Datos base por envío — solo se recalcula cuando llega un nuevo bloque del backend
+  const datosBase = useMemo(() => {
     const detalles = resultado?.detallesEnvios ?? {};
     const rutasAsignadas = resultado?.rutasAsignadas ?? {};
-    const ocupacionVuelos = resultado?.ocupacionVuelos ?? {};
-    const result: Record<Tab, any[]> = { vuelo: [], espera: [], completado: [] };
-
-    Object.entries(detalles as Record<string, any>).forEach(([id, detalle]) => {
+    const fechasTramos = (resultado as any)?.fechasTramos ?? {};
+    return Object.entries(detalles as Record<string, any>).map(([id, detalle]) => {
       const tramos: any[] = rutasAsignadas[id] ?? [];
+      const fechas: string[] = fechasTramos[id] ?? [];
+      const vuelo = tramos.map(v => `${v.origen}-${v.destino}-${normH(v.horaSalida??'')}`).join(' → ') || '—';
+      return { id, idCliente: detalle.idCliente, vuelo, maletas: detalle.cantidadMaletas, origen: detalle.origen, destino: detalle.destino, tramos, fechas };
+    });
+  }, [resultado]);
+
+  // Clasificación en tiempo real — se recalcula cada segundo pero solo para vuelo/completado
+  const grupos = useMemo(() => {
+    const result: Record<Tab, any[]> = { vuelo: [], espera: [], completado: [] };
+    datosBase.forEach(({ tramos, fechas, ...item }) => {
       let estado: Tab = 'espera';
       let minLlegadaFinal = 0;
       if (tramos.length > 0) {
         let hayVuelo = false, todosCompletos = true;
-        for (const v of tramos) {
-          const fechaSalida = Object.keys(ocupacionVuelos)
-            .find((k: string) => { const sf = k.split('_')[0]; const p = sf.split('-'); return p[0]===v.origen && p[1]===v.destino && normH(p[2])===normH(v.horaSalida??''); })
-            ?.split('_')[1];
+        for (let i = 0; i < tramos.length; i++) {
+          const v = tramos[i];
+          const fechaSalida = fechas[i];
           if (!fechaSalida) { todosCompletos = false; continue; }
           const e = clasificarVuelo(fechaSalida, normH(v.horaSalida), normH(v.horaLlegada), fechaInicioSim, minutosVirtualesTotales);
-          // calcular minutos de llegada del último tramo
-          const [fy,fm,fd2] = fechaInicioSim.split('-').map(Number);
-          const [vy,vm,vd] = fechaSalida.split('-').map(Number);
-          const diasDiff = Math.floor((new Date(vy,vm-1,vd).getTime()-new Date(fy,fm-1,fd2).getTime())/86400000);
-          let mLleg = diasDiff*1440 + parseHoraAMin(normH(v.horaLlegada));
-          if (mLleg <= diasDiff*1440 + parseHoraAMin(normH(v.horaSalida))) mLleg += 1440;
+          const mLleg = minLlegadaDesdeInicio(fechaSalida, normH(v.horaSalida??''), normH(v.horaLlegada??''), fechaInicioSim);
           if (mLleg > minLlegadaFinal) minLlegadaFinal = mLleg;
           if (e === 'vuelo') { hayVuelo = true; todosCompletos = false; break; }
           if (e === 'espera') todosCompletos = false;
         }
         estado = hayVuelo ? 'vuelo' : todosCompletos ? 'completado' : 'espera';
       }
-      const vuelo = tramos.map(v => `${v.origen}-${v.destino}-${normH(v.horaSalida??'')}`).join(' → ') || '—';
-      result[estado].push({ id, idCliente: detalle.idCliente, vuelo, maletas: detalle.cantidadMaletas, origen: detalle.origen, destino: detalle.destino, minLlegadaFinal });
+      result[estado].push({ ...item, minLlegadaFinal });
     });
     return result;
-  }, [resultado, minutosVirtualesTotales, fechaInicioSim]);
+  }, [datosBase, minutosVirtualesTotales, fechaInicioSim]);
 
-  const filasFiltradas = useMemo(() => {
+  const [pagina, setPagina] = useState(0);
+  const PAGE_SIZE = 50;
+
+  const filasTotales = useMemo(() => {
     const fo = filtroOrigen.trim().toUpperCase();
     const fd = filtroDestino.trim().toUpperCase();
     let base = grupos[tab];
@@ -640,14 +658,19 @@ function DrawerEnvios({ resultado, minutosVirtualesTotales, fechaInicioSim, onCe
       const minCorte = minutosVirtualesTotales - horasAplicadas * 60;
       base = base.filter(e => e.minLlegadaFinal >= minCorte);
     }
-    const sorted = base
+    return base
       .filter(e => (!fo || e.origen.toUpperCase().includes(fo)) && (!fd || e.destino.toUpperCase().includes(fd)))
       .sort((a, b) => {
         if (orden.col === 'maletas') return (a.maletas - b.maletas) * orden.dir;
         return String(a[orden.col]).localeCompare(String(b[orden.col])) * orden.dir;
       });
-    return tab === 'espera' ? sorted.slice(0, 100) : sorted;
   }, [grupos, tab, orden, filtroOrigen, filtroDestino, horasAplicadas, minutosVirtualesTotales]);
+
+  // Reset página al cambiar tab o filtros
+  React.useEffect(() => { setPagina(0); }, [tab, filtroOrigen, filtroDestino]);
+
+  const filasFiltradas = filasTotales.slice(pagina * PAGE_SIZE, (pagina + 1) * PAGE_SIZE);
+  const totalPaginas = Math.ceil(filasTotales.length / PAGE_SIZE);
 
   const thC = (col: Col) =>
     `px-2 py-2 text-left cursor-pointer select-none hover:text-white transition-colors whitespace-nowrap ${orden.col === col ? 'text-tasf-green' : 'text-slate-400'}`;
@@ -759,10 +782,16 @@ function DrawerEnvios({ resultado, minutosVirtualesTotales, fechaInicioSim, onCe
           </tbody>
         </table>
         )}
-        {tab === 'espera' && grupos.espera.length > 100 && (
-          <p className="text-center text-slate-500 text-[10px] py-2 italic">
-            Mostrando 100 de {grupos.espera.length} envíos en espera
-          </p>
+        {totalPaginas > 1 && (
+          <div className="flex items-center justify-center gap-3 py-2 border-t border-slate-700">
+            <button onClick={() => setPagina(p => Math.max(0, p - 1))} disabled={pagina === 0}
+              className="text-[10px] px-2 py-0.5 rounded bg-slate-700 text-slate-300 disabled:opacity-30 hover:bg-slate-600">← Ant</button>
+            <span className="text-[10px] text-slate-400">
+              {pagina + 1} / {totalPaginas} — {filasTotales.length} envíos
+            </span>
+            <button onClick={() => setPagina(p => Math.min(totalPaginas - 1, p + 1))} disabled={pagina === totalPaginas - 1}
+              className="text-[10px] px-2 py-0.5 rounded bg-slate-700 text-slate-300 disabled:opacity-30 hover:bg-slate-600">Sig →</button>
+          </div>
         )}
       </div>
     </>
@@ -1008,6 +1037,46 @@ function App() {
   const [aeropuertoResaltado, setAeropuertoResaltado] = useState<string | null>(null);
   const [modoOscuro, setModoOscuro] = useState(true);
   const inicioRealRef = useRef<number | null>(null);
+
+  // Ocupación en tiempo real por aeropuerto — compartido entre MapArea y DrawerAlmacenes
+  const ocupacionAeropuertosRT = useMemo(() => {
+    const result: Record<string, number> = {};
+    if (!resultado?.detallesEnvios || !resultado?.rutasAsignadas || !fechaInicio) return result;
+    const fechasTramos = (resultado as any).fechasTramos ?? {};
+    const normH = (t: string) => { const p=(t??"").split(":"); return `${p[0].padStart(2,"0")}:${(p[1]??"00").padStart(2,"0")}:${(p[2]??"00").padStart(2,"0")}`; };
+    Object.entries(resultado.detallesEnvios).forEach(([id, detalle]: [string, any]) => {
+      const tramos: any[] = resultado.rutasAsignadas[id] ?? [];
+      const fechas: string[] = fechasTramos[id] ?? [];
+      tramos.forEach((v: any, i: number) => {
+        const fechaSalida = fechas[i];
+        if (!fechaSalida) return;
+        const estado = clasificarVuelo(fechaSalida, normH(v.horaSalida??''), normH(v.horaLlegada??''), fechaInicio, minutosVirtualesTotales);
+        const esUltimo = i === tramos.length - 1;
+
+        // Tránsito: en espera y tramo anterior ya completó → maletas en v.origen
+        if (estado === 'espera') {
+          const tramoAnteriorOk = i === 0 || (() => {
+            const fa = fechas[i - 1];
+            if (!fa) return false;
+            return clasificarVuelo(fa, normH(tramos[i-1].horaSalida??''), normH(tramos[i-1].horaLlegada??''), fechaInicio, minutosVirtualesTotales) === 'completado';
+          })();
+          if (tramoAnteriorOk) {
+            result[v.origen] = (result[v.origen] ?? 0) + detalle.cantidadMaletas;
+          }
+        }
+
+        // Destino final: último tramo completado, cliente aún no recogió (< 15 min desde llegada)
+        if (estado === 'completado' && esUltimo) {
+          const minLleg = minLlegadaDesdeInicio(fechaSalida, normH(v.horaSalida??''), normH(v.horaLlegada??''), fechaInicio);
+          if (minutosVirtualesTotales < minLleg + 15) {
+            result[v.destino] = (result[v.destino] ?? 0) + detalle.cantidadMaletas;
+          }
+        }
+
+      });
+    });
+    return result;
+  }, [resultado, Math.floor(minutosVirtualesTotales), fechaInicio]);
 
   const [archivoAero, setArchivoAero] = useState<File | null>(null);
   const [archivoVuelos, setArchivoVuelos] = useState<File | null>(null);
@@ -1436,7 +1505,7 @@ function App() {
                   horaInicio={horaInicio}
                 />
               )}
-              <MapArea solucion={resultado} progreso={porcentajeSimulacion} modoOscuro={modoOscuro} horaVirtualMinutos={horaVirtualMinutos} minutosVirtualesTotales={minutosVirtualesTotales} fechaInicioSim={fechaInicio} vueloResaltado={vueloResaltado} onVueloResaltadoClear={() => setVueloResaltado(null)} aeropuertoResaltado={aeropuertoResaltado} />
+              <MapArea solucion={resultado} progreso={porcentajeSimulacion} modoOscuro={modoOscuro} horaVirtualMinutos={horaVirtualMinutos} minutosVirtualesTotales={minutosVirtualesTotales} fechaInicioSim={fechaInicio} vueloResaltado={vueloResaltado} onVueloResaltadoClear={() => setVueloResaltado(null)} aeropuertoResaltado={aeropuertoResaltado} ocupacionAeropuertosRT={ocupacionAeropuertosRT} />
 
               {/* Botones flotantes */}
               {resultado && (
@@ -1471,6 +1540,7 @@ function App() {
                     fechaInicioSim={fechaInicio}
                     onCerrar={() => setPanelAlmacenesAbierto(false)}
                     onSeleccionarAeropuerto={setAeropuertoResaltado}
+                    ocupacionAeropuertosRT={ocupacionAeropuertosRT}
                   />
                 )}
               </div>

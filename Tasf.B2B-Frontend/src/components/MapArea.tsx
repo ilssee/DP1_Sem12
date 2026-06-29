@@ -14,6 +14,7 @@ interface MapAreaProps {
   vueloResaltado?: string | null;
   onVueloResaltadoClear?: () => void;
   aeropuertoResaltado?: string | null;
+  ocupacionAeropuertosRT?: Record<string, number>;
 }
 
 function EventosMapa({ alHacerClic }: { alHacerClic: () => void }) {
@@ -109,9 +110,10 @@ const calcularProgresoTotal = (
   return (minutosActuales - minSalida) / (minLlegada - minSalida);
 };
 
-export default function MapArea({ solucion, progreso, modoOscuro = true, horaVirtualMinutos = 0, minutosVirtualesTotales, fechaInicioSim = "2026-01-05", vueloResaltado, onVueloResaltadoClear, aeropuertoResaltado }: MapAreaProps) {
+export default function MapArea({ solucion, progreso, modoOscuro = true, horaVirtualMinutos = 0, minutosVirtualesTotales, fechaInicioSim = "2026-01-05", vueloResaltado, onVueloResaltadoClear, aeropuertoResaltado, ocupacionAeropuertosRT = {} }: MapAreaProps) {
   const [vueloSeleccionado, setVueloSeleccionado] = useState<string | null>(null);
   const markerRefs = useRef<Map<string, L.Marker>>(new Map());
+  const aeroMarkerRefs = useRef<Map<string, L.Marker>>(new Map());
 
   // 1. Sincronizar selección desde panel lateral
   useEffect(() => {
@@ -128,6 +130,16 @@ export default function MapArea({ solucion, progreso, modoOscuro = true, horaVir
     return () => clearTimeout(timer);
   }, [vueloSeleccionado]);
 
+  // 3. Abrir popup del aeropuerto cuando se selecciona desde el drawer
+  useEffect(() => {
+    if (!aeropuertoResaltado) return;
+    const timer = setTimeout(() => {
+      const marker = aeroMarkerRefs.current.get(aeropuertoResaltado);
+      if (marker) marker.openPopup();
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [aeropuertoResaltado]);
+
   // Construir vuelos desde ocupacionVuelos (incluye vuelos con 0 maletas desde el backend)
   const rutasVisuales = useMemo(() => {
     if (!solucion?.ocupacionVuelos) return [];
@@ -137,11 +149,15 @@ export default function MapArea({ solucion, progreso, modoOscuro = true, horaVir
       return `${parts[0].padStart(2, "0")}:${(parts[1]??"00").padStart(2, "0")}:${(parts[2]??"00").padStart(2, "0")}`;
     };
 
-    // Recoger conteo de envíos desde rutasAsignadas
+    // Recoger conteo de envíos desde rutasAsignadas + fechasTramos (clave con fecha para no mezclar días)
     const enviosPorVuelo = new Map<string, number>();
-    Object.values(solucion.rutasAsignadas ?? {}).forEach((ruta) => {
-      ruta.forEach((vuelo) => {
-        const k = `${vuelo.origen}-${vuelo.destino}-${normalizarHora(vuelo.horaSalida)}`;
+    const fechasTramos = (solucion as any).fechasTramos ?? {};
+    Object.entries(solucion.rutasAsignadas ?? {}).forEach(([id, ruta]: [string, any]) => {
+      const fechas: string[] = fechasTramos[id] ?? [];
+      ruta.forEach((vuelo: any, i: number) => {
+        const fecha = fechas[i];
+        if (!fecha) return;
+        const k = `${vuelo.origen}-${vuelo.destino}-${normalizarHora(vuelo.horaSalida)}_${fecha}`;
         enviosPorVuelo.set(k, (enviosPorVuelo.get(k) ?? 0) + 1);
       });
     });
@@ -164,6 +180,7 @@ export default function MapArea({ solucion, progreso, modoOscuro = true, horaVir
       if (!coordOrigen || !coordDestino) return;
 
       const claveRuta = `${origen}-${destino}-${normalizarHora(horaSalidaRaw)}`;
+      const claveConFecha = `${claveRuta}_${fechaSalida}`;
       const horaLlegada = horasLlegada[claveRuta] ?? "";
       if (!horaLlegada) return; // sin datos de llegada: no renderizar
       const cap = solucion.capacidadesVuelos?.[claveRuta] ?? 350;
@@ -179,7 +196,7 @@ export default function MapArea({ solucion, progreso, modoOscuro = true, horaVir
         horaLlegada,
         fechaSalida,
         cantidad, capMax: cap, pct, color,
-        numEnvios: enviosPorVuelo.get(claveRuta) ?? 0,
+        numEnvios: enviosPorVuelo.get(claveConFecha) ?? 0,
         lat1: coordOrigen.lat, lng1: coordOrigen.lng,
         lat2: coordDestino.lat, lng2: coordDestino.lng,
       });
@@ -286,10 +303,20 @@ export default function MapArea({ solucion, progreso, modoOscuro = true, horaVir
     );
   }, [vueloSeleccionado, rutasVisuales, minutosVirtualesTotales, horaVirtualMinutos]);
 
-
+  // Ocupación en tiempo real por aeropuerto
 
   return (
-    <MapContainer preferCanvas={true} center={[30, 0]} zoom={3} style={{ height: '100%', width: '100%', zIndex: 10 }}>
+    <MapContainer
+      preferCanvas={true}
+      center={[30, 0]}
+      zoom={3}
+      minZoom={2}
+      maxZoom={10}
+      maxBounds={[[-90, -180], [90, 180]]}
+      maxBoundsViscosity={1.0}
+      worldCopyJump={false}
+      style={{ height: '100%', width: '100%', zIndex: 10 }}
+    >
       <TileLayer
         url={modoOscuro
           ? "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
@@ -300,34 +327,41 @@ export default function MapArea({ solucion, progreso, modoOscuro = true, horaVir
       <VolarAAvion posicion={elementosMapa.posicionResaltado} vueloId={vueloSeleccionado} />
       <VolarAAeropuerto codigo={aeropuertoResaltado} />
 
-      {/* Pins de aeropuertos con ocupación */}
+      {/* Pins de aeropuertos con ocupación en tiempo real */}
       {Object.entries(aeropuertosDB).map(([codigo, coord]) => {
-        const ocupacion = solucion?.ocupacionAeropuertos
-          ? Object.entries(solucion.ocupacionAeropuertos)
-              .filter(([k]) => k.split("_")[0] === codigo)
-              .reduce((sum, [, v]) => sum + v, 0)
-          : 0;
+        const ocupacion = ocupacionAeropuertosRT[codigo] ?? 0;
         const capMax = solucion?.capacidadesAeropuertos?.[codigo] ?? 0;
         const pct = capMax > 0 ? (ocupacion / capMax) * 100 : 0;
         const color = pct >= 80 ? "#E32929" : pct >= 50 ? "#FFB800" : (modoOscuro ? "white" : "#1e293b");
         const resaltado = aeropuertoResaltado === codigo;
         const pinW = resaltado ? 26 : 18;
         const pinH = resaltado ? 36 : 26;
+        const fillColor = pct >= 80 ? '#E32929' : pct >= 50 ? '#FFB800' : '#22c55e';
         const pinDinamico = new L.DivIcon({
-          html: `<svg viewBox="0 0 24 24" width="${pinW}" height="${pinH}" xmlns="http://www.w3.org/2000/svg">
-            <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"
-              fill="${resaltado ? '#22c55e' : color}" stroke="${resaltado ? '#fff' : 'rgba(0,0,0,0.4)'}" stroke-width="${resaltado ? 1 : 0.5}"/>
+          html: `<svg viewBox="0 0 28 24" width="${pinW}" height="${pinH}" xmlns="http://www.w3.org/2000/svg">
+            <rect x="1" y="9" width="26" height="14" rx="1" fill="${fillColor}" stroke="rgba(0,0,0,0.5)" stroke-width="0.8"/>
+            <rect x="1" y="7" width="26" height="3" rx="0.5" fill="${fillColor}" stroke="rgba(0,0,0,0.5)" stroke-width="0.8"/>
+            <rect x="8" y="4" width="12" height="4" rx="0.5" fill="${fillColor}" stroke="rgba(0,0,0,0.5)" stroke-width="0.8"/>
+            <rect x="3" y="14" width="7" height="9" rx="0.3" fill="rgba(0,0,0,0.3)"/>
+            <line x1="3" y1="16" x2="10" y2="16" stroke="rgba(255,255,255,0.3)" stroke-width="0.5"/>
+            <line x1="3" y1="18" x2="10" y2="18" stroke="rgba(255,255,255,0.3)" stroke-width="0.5"/>
+            <line x1="3" y1="20" x2="10" y2="20" stroke="rgba(255,255,255,0.3)" stroke-width="0.5"/>
+            <rect x="13" y="14" width="7" height="9" rx="0.3" fill="rgba(0,0,0,0.3)"/>
+            <line x1="13" y1="16" x2="20" y2="16" stroke="rgba(255,255,255,0.3)" stroke-width="0.5"/>
+            <line x1="13" y1="18" x2="20" y2="18" stroke="rgba(255,255,255,0.3)" stroke-width="0.5"/>
+            <line x1="13" y1="20" x2="20" y2="20" stroke="rgba(255,255,255,0.3)" stroke-width="0.5"/>
           </svg>`,
           className: "bg-transparent border-none",
           iconSize: [pinW, pinH], iconAnchor: [pinW/2, pinH], popupAnchor: [0, -pinH],
         });
         return (
-          <Marker key={`aero-${codigo}`} position={[coord.lat, coord.lng]} icon={pinDinamico}>
+          <Marker key={`aero-${codigo}`} position={[coord.lat, coord.lng]} icon={pinDinamico}
+            ref={(ref) => { if (ref) aeroMarkerRefs.current.set(codigo, ref); else aeroMarkerRefs.current.delete(codigo); }}>
             <Popup autoPan={false}>
               <div className="text-center min-w-[120px]">
                 <strong className="text-tasf-dark font-bold">{codigo}</strong><br />
                 <span className="text-slate-500 text-xs">{coord.nombre}</span><br />
-                {ocupacion > 0 && (
+                {capMax > 0 && (
                   <span className={`text-xs font-bold px-2 py-1 rounded mt-1 inline-block ${pct >= 80 ? "bg-red-100 text-red-600" : pct >= 50 ? "bg-yellow-100 text-yellow-600" : "bg-green-100 text-green-600"}`}>
                     {ocupacion} / {capMax} maletas
                   </span>

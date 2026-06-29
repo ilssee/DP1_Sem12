@@ -107,24 +107,22 @@ public class AsyncSimulacionService {
                 }
                 tTabu[paso] = System.currentTimeMillis() - t0;
 
-                // Acumular ocupación: solucionParcial ya tiene el estado completo (base + nuevos)
-                // Solo actualizamos estadoAcumulado para que el siguiente paso lo use como base
+                // Acumular ocupación, rutas y detalles entre bloques
                 t0 = System.currentTimeMillis();
                 estadoAcumulado.getOcupacionVuelos().putAll(solucionParcial.getOcupacionVuelos());
                 estadoAcumulado.getOcupacionAeropuertos().putAll(solucionParcial.getOcupacionAeropuertos());
+                estadoAcumulado.getRutasAsignadas().putAll(solucionParcial.getRutasAsignadas());
                 tAcum[paso] = System.currentTimeMillis() - t0;
 
-                // D. Enriquecer
+                // D. Enriquecer (con todos los pedidos acumulados para detallesEnvios)
                 t0 = System.currentTimeMillis();
-                enriquecerSolucion(solucionParcial, vuelos, aeropuertos, pedidosNuevos, metricas);
+                enriquecerSolucion(solucionParcial, vuelos, aeropuertos, pedidosNuevos, metricas, estadoAcumulado);
                 tEnriq[paso] = System.currentTimeMillis() - t0;
 
                 // --- FILTROS ---
                 t0 = System.currentTimeMillis();
-                Map<String, List<Vuelo>> rutasFiltradas = solucionParcial.getRutasAsignadas().entrySet().stream()
-                        .filter(e -> pedidosNuevos.stream().anyMatch(p -> p.getIdPedido().equals(e.getKey())))
-                        .collect(java.util.stream.Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
-                solucionParcial.setRutasAsignadas(rutasFiltradas);
+                // Enviar rutas acumuladas completas al frontend
+                solucionParcial.setRutasAsignadas(new HashMap<>(estadoAcumulado.getRutasAsignadas()));
 
                 // Agregar vuelos cuya salida cae dentro de la ventana actual con valor 0 si no asignados
                 java.time.format.DateTimeFormatter fmtBloque = java.time.format.DateTimeFormatter.ofPattern("HH:mm:ss");
@@ -143,10 +141,20 @@ public class AsyncSimulacionService {
                 // capacidadesVuelos: enviar todos (sin filtrar por asignación)
                 // El frontend ya tiene el mapa completo de capacidades por ruta
 
-                solucionParcial.setOcupacionVuelos(solucionParcial.getOcupacionVuelos().entrySet().stream()
+                // Vuelos con maletas: top 200 por ocupación
+                // Vuelos con 0 maletas: todos los del bloque actual (para mostrar en mapa)
+                Map<String, Integer> conMaletas = solucionParcial.getOcupacionVuelos().entrySet().stream()
+                        .filter(e -> e.getValue() > 0)
                         .sorted((a, b) -> b.getValue().compareTo(a.getValue()))
                         .limit(200)
-                        .collect(java.util.stream.Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue)));
+                        .collect(java.util.stream.Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
+                Map<String, Integer> sinMaletas = solucionParcial.getOcupacionVuelos().entrySet().stream()
+                        .filter(e -> e.getValue() == 0)
+                        .collect(java.util.stream.Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
+                Map<String, Integer> ocupacionFinal = new java.util.LinkedHashMap<>();
+                ocupacionFinal.putAll(conMaletas);
+                ocupacionFinal.putAll(sinMaletas);
+                solucionParcial.setOcupacionVuelos(ocupacionFinal);
                 solucionParcial.setOcupacionAeropuertos(solucionParcial.getOcupacionAeropuertos().entrySet().stream()
                         .sorted((a, b) -> b.getValue().compareTo(a.getValue()))
                         .limit(100)
@@ -212,7 +220,7 @@ public class AsyncSimulacionService {
     }
 
     private void enriquecerSolucion(Solucion solucion, List<Vuelo> vuelos, List<Aeropuerto> aeropuertos,
-            List<Pedido> pedidos, MetricasAcumuladas metricas) {
+            List<Pedido> pedidos, MetricasAcumuladas metricas, Solucion estadoAcumulado) {
         java.time.format.DateTimeFormatter FMT = java.time.format.DateTimeFormatter.ofPattern("HH:mm:ss");
         Map<String, Integer> caps = new HashMap<>();
         Map<String, String> llegadas = new HashMap<>();
@@ -223,6 +231,10 @@ public class AsyncSimulacionService {
         }
         solucion.setCapacidadesVuelos(caps);
         solucion.setHorasLlegada(llegadas);
+
+        // Acumular detallesEnvios del bloque actual en estadoAcumulado y enviar el total
+        estadoAcumulado.getDetallesEnvios().putAll(solucion.getDetallesEnvios());
+        solucion.setDetallesEnvios(new HashMap<>(estadoAcumulado.getDetallesEnvios()));
 
         Map<String, Integer> capsAeros = new HashMap<>();
         for (Aeropuerto a : aeropuertos) capsAeros.put(a.getCodigo(), a.getCapacidadMax());
