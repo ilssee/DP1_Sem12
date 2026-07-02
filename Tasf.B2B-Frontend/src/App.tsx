@@ -1234,6 +1234,188 @@ function RutasPanel({ resultado, minutosVirtualesTotales, fechaInicioSim, vueloR
   );
 }
 
+function ReportePeriodo({ resultado, fechaInicio, dias, onCerrar }: {
+  resultado: Solucion; fechaInicio: string; dias: number; onCerrar: () => void;
+}) {
+  const [pagina, setPagina] = useState(0);
+  const [filtroOrigen, setFiltroOrigen] = useState('');
+  const [filtroDestino, setFiltroDestino] = useState('');
+  const [filtroTipo, setFiltroTipo] = useState<'' | 'directo' | 'escalas' | 'sin-ruta'>('');
+  const PAGE_SIZE = 20;
+
+  const envios = useMemo(() => {
+    const detalles = resultado.detallesEnvios ?? {};
+    const rutasAsignadas = resultado.rutasAsignadas ?? {};
+    return Object.entries(detalles).map(([id, detalle]) => {
+      const tramos: Vuelo[] = rutasAsignadas[id] ?? [];
+      const tieneRuta = tramos.length > 0;
+      const paradas = tieneRuta ? [tramos[0].origen, ...tramos.map(v => v.destino)] : [];
+      const esDirecto = paradas.length === 2;
+      const escalas = Math.max(0, paradas.length - 2);
+      return { id, idCliente: detalle.idCliente, origen: detalle.origen, destino: detalle.destino, maletas: detalle.cantidadMaletas, tieneRuta, esDirecto, escalas, rutaStr: tieneRuta ? paradas.join(' → ') : '—' };
+    });
+  }, [resultado]);
+
+  const kpis = useMemo(() => {
+    const total = envios.length;
+    const conRuta = envios.filter(e => e.tieneRuta).length;
+    const sinRuta = total - conRuta;
+    const directos = envios.filter(e => e.tieneRuta && e.esDirecto).length;
+    const conEscalas = conRuta - directos;
+    const totalMaletas = envios.reduce((s, e) => s + e.maletas, 0);
+    const capVuelos = resultado.capacidadesVuelos ?? {};
+    let sumPct = 0, countV = 0;
+    Object.entries(resultado.ocupacionVuelos ?? {}).forEach(([key, cant]) => {
+      if (!cant) return;
+      const sf = key.substring(0, key.lastIndexOf('_'));
+      const p = sf.split('-');
+      const clave = `${p[0]}-${p[1]}-${p.slice(2).join(':')}`;
+      const cap = (capVuelos as any)[clave] ?? 350;
+      sumPct += (cant / cap) * 100; countV++;
+    });
+    const pctVuelos = countV > 0 ? Math.round(sumPct / countV) : 0;
+    const capAeros = resultado.capacidadesAeropuertos ?? {};
+    const ocAeros = resultado.ocupacionAeropuertos ?? {};
+    let sumPctA = 0, countA = 0;
+    Object.entries(ocAeros).forEach(([cod, oc]) => {
+      const cap = capAeros[cod]; if (!cap) return;
+      sumPctA += (oc / cap) * 100; countA++;
+    });
+    const pctAeros = countA > 0 ? Math.round(sumPctA / countA) : 0;
+    return { total, conRuta, sinRuta, directos, conEscalas, totalMaletas, pctVuelos, pctAeros };
+  }, [envios, resultado]);
+
+  const filtrados = useMemo(() => {
+    return envios.filter(e => {
+      if (filtroOrigen && !e.origen.toUpperCase().includes(filtroOrigen.toUpperCase())) return false;
+      if (filtroDestino && !e.destino.toUpperCase().includes(filtroDestino.toUpperCase())) return false;
+      if (filtroTipo === 'directo' && !(e.tieneRuta && e.esDirecto)) return false;
+      if (filtroTipo === 'escalas' && !(e.tieneRuta && !e.esDirecto)) return false;
+      if (filtroTipo === 'sin-ruta' && e.tieneRuta) return false;
+      return true;
+    });
+  }, [envios, filtroOrigen, filtroDestino, filtroTipo]);
+
+  useEffect(() => { setPagina(0); }, [filtroOrigen, filtroDestino, filtroTipo]);
+
+  const paginaActual = filtrados.slice(pagina * PAGE_SIZE, (pagina + 1) * PAGE_SIZE);
+  const totalPaginas = Math.ceil(filtrados.length / PAGE_SIZE);
+
+  const kpiCards: { label: string; value: string | number; color: string }[] = [
+    { label: 'Total envíos', value: kpis.total, color: 'text-white' },
+    { label: 'Con ruta asignada', value: `${kpis.conRuta} (${kpis.total > 0 ? Math.round(kpis.conRuta / kpis.total * 100) : 0}%)`, color: 'text-tasf-green' },
+    { label: 'Sin ruta (no atendidos)', value: kpis.sinRuta, color: kpis.sinRuta > 0 ? 'text-red-400' : 'text-slate-400' },
+    { label: 'Total maletas', value: kpis.totalMaletas.toLocaleString(), color: 'text-blue-300' },
+    { label: 'Vuelos directos', value: kpis.directos, color: 'text-tasf-green' },
+    { label: 'Con escalas', value: kpis.conEscalas, color: 'text-yellow-400' },
+    { label: '% Ocupación vuelos (prom.)', value: `${kpis.pctVuelos}%`, color: 'text-slate-300' },
+    { label: '% Ocupación almacenes (prom.)', value: `${kpis.pctAeros}%`, color: 'text-slate-300' },
+  ];
+
+  return (
+    <div className="fixed inset-0 z-[3000] bg-slate-900 flex flex-col overflow-hidden">
+      {/* Header */}
+      <div className="bg-slate-800 border-b border-slate-700 px-6 py-4 flex items-center justify-between shrink-0">
+        <div>
+          <h1 className="text-white font-bold text-lg">📊 Reporte — Simulación por Periodo</h1>
+          <p className="text-slate-400 text-xs mt-0.5">{dias} días · Inicio: {fechaInicio}</p>
+        </div>
+        <button onClick={onCerrar} className="text-slate-400 hover:text-white text-2xl leading-none px-2">✕</button>
+      </div>
+
+      {/* KPIs */}
+      <div className="px-6 py-4 grid grid-cols-4 gap-3 border-b border-slate-700 shrink-0">
+        {kpiCards.map(k => (
+          <div key={k.label} className="bg-slate-800 rounded-xl p-4 border border-slate-700">
+            <p className="text-[10px] text-slate-400 uppercase tracking-widest mb-1">{k.label}</p>
+            <p className={`text-2xl font-bold font-mono ${k.color}`}>{k.value}</p>
+          </div>
+        ))}
+      </div>
+
+      {/* Filtros + tabla */}
+      <div className="flex-1 flex flex-col overflow-hidden px-6 pt-4">
+        <div className="flex items-center gap-3 mb-3 shrink-0 flex-wrap">
+          <input
+            value={filtroOrigen} onChange={e => setFiltroOrigen(e.target.value)}
+            placeholder="Origen…"
+            className="bg-slate-800 border border-slate-600 text-white text-xs rounded px-3 py-1.5 outline-none focus:border-tasf-green w-28"
+          />
+          <input
+            value={filtroDestino} onChange={e => setFiltroDestino(e.target.value)}
+            placeholder="Destino…"
+            className="bg-slate-800 border border-slate-600 text-white text-xs rounded px-3 py-1.5 outline-none focus:border-tasf-green w-28"
+          />
+          {(['', 'directo', 'escalas', 'sin-ruta'] as const).map(t => (
+            <button key={t} onClick={() => setFiltroTipo(t)}
+              className={`text-xs px-3 py-1.5 rounded border transition-colors ${filtroTipo === t ? 'bg-tasf-green border-tasf-green text-white' : 'border-slate-600 text-slate-400 hover:text-white hover:border-slate-400'}`}>
+              {t === '' ? 'Todos' : t === 'directo' ? '✈ Directo' : t === 'escalas' ? '↗ Escalas' : '✕ Sin ruta'}
+            </button>
+          ))}
+          <span className="text-slate-500 text-xs ml-auto">{filtrados.length} envíos</span>
+        </div>
+
+        <div className="flex-1 overflow-auto rounded-xl border border-slate-700">
+          <table className="w-full text-xs text-white min-w-[900px]">
+            <thead className="sticky top-0 bg-slate-800 text-[10px] uppercase tracking-wider z-10">
+              <tr>
+                <th className="px-3 py-2.5 text-left text-slate-400">ID Pedido</th>
+                <th className="px-3 py-2.5 text-left text-slate-400">Cliente</th>
+                <th className="px-3 py-2.5 text-left text-slate-400">Origen</th>
+                <th className="px-3 py-2.5 text-left text-slate-400">Destino</th>
+                <th className="px-3 py-2.5 text-left text-slate-400">Ruta tomada</th>
+                <th className="px-3 py-2.5 text-left text-slate-400">Tipo</th>
+                <th className="px-3 py-2.5 text-left text-slate-400">Maletas</th>
+                <th className="px-3 py-2.5 text-left text-slate-400">Estado</th>
+              </tr>
+            </thead>
+            <tbody>
+              {paginaActual.length === 0 ? (
+                <tr><td colSpan={8} className="text-center text-slate-500 py-10 italic">Sin resultados</td></tr>
+              ) : paginaActual.map(e => (
+                <tr key={e.id} className="border-b border-slate-800 hover:bg-slate-800 transition-colors">
+                  <td className="px-3 py-2 font-mono text-[11px] text-tasf-green">{e.id}</td>
+                  <td className="px-3 py-2 text-slate-300 font-mono text-[11px]">{e.idCliente}</td>
+                  <td className="px-3 py-2 font-bold">{e.origen}</td>
+                  <td className="px-3 py-2 font-bold">{e.destino}</td>
+                  <td className="px-3 py-2 font-mono text-[11px] text-slate-200 max-w-[280px] truncate" title={e.rutaStr}>{e.rutaStr}</td>
+                  <td className="px-3 py-2">
+                    {!e.tieneRuta ? (
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-red-500/20 text-red-400">Sin ruta</span>
+                    ) : e.esDirecto ? (
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-tasf-green/20 text-tasf-green">Directo</span>
+                    ) : (
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-yellow-500/20 text-yellow-400">{e.escalas} escala{e.escalas !== 1 ? 's' : ''}</span>
+                    )}
+                  </td>
+                  <td className="px-3 py-2">
+                    <span className={`font-bold text-[11px] px-1.5 py-0.5 rounded ${e.maletas >= 100 ? 'bg-orange-500/20 text-orange-400' : 'bg-slate-700 text-slate-200'}`}>{e.maletas}</span>
+                  </td>
+                  <td className="px-3 py-2">
+                    {e.tieneRuta
+                      ? <span className="text-[10px] text-tasf-green">✓ Asignado</span>
+                      : <span className="text-[10px] text-red-400">✕ No atendido</span>}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        {totalPaginas > 1 && (
+          <div className="flex items-center justify-center gap-3 py-3 shrink-0">
+            <button onClick={() => setPagina(p => Math.max(0, p - 1))} disabled={pagina === 0}
+              className="text-xs px-3 py-1 rounded bg-slate-700 text-slate-300 disabled:opacity-30 hover:bg-slate-600">← Anterior</button>
+            <span className="text-xs text-slate-400">{pagina + 1} / {totalPaginas} — {filtrados.length} envíos</span>
+            <button onClick={() => setPagina(p => Math.min(totalPaginas - 1, p + 1))} disabled={pagina === totalPaginas - 1}
+              className="text-xs px-3 py-1 rounded bg-slate-700 text-slate-300 disabled:opacity-30 hover:bg-slate-600">Siguiente →</button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function App() {
   const [vistaActiva, setVistaActiva] = useState<Vista>("dia-a-dia");
 
@@ -1267,6 +1449,7 @@ function App() {
   const [aeropuertosFiltrados, setAeropuertosFiltrados] = useState<string[] | null>(null);
   const [vuelosFiltrados, setVuelosFiltrados] = useState<string[] | null>(null);
   const [modoOscuro, setModoOscuro] = useState(true);
+  const [mostrarReporte, setMostrarReporte] = useState(false);
   const inicioRealRef = useRef<number | null>(null);
 
   // Ocupación en tiempo real por aeropuerto — compartido entre MapArea y DrawerAlmacenes
@@ -1842,8 +2025,16 @@ function App() {
             </div>
 
             {!simulandoEnVivo && porcentajeSimulacion === 100 && (
-              <div className="w-full bg-tasf-green text-white text-center py-2 font-bold tracking-widest uppercase shadow-md z-20">
-                SIMULACIÓN TERMINADA
+              <div className="w-full bg-tasf-green text-white flex items-center justify-center gap-4 py-2 shadow-md z-20">
+                <span className="font-bold tracking-widest uppercase text-sm">SIMULACIÓN TERMINADA</span>
+                {resultado && (
+                  <button
+                    onClick={() => setMostrarReporte(true)}
+                    className="bg-white text-tasf-green font-bold text-xs px-4 py-1 rounded-lg hover:bg-green-50 transition-colors"
+                  >
+                    📊 Ver Reporte
+                  </button>
+                )}
               </div>
             )}
 
@@ -2027,6 +2218,16 @@ function App() {
           </div>
         </div>
       </div>
+
+      {/* Reporte periodo */}
+      {mostrarReporte && resultado && (
+        <ReportePeriodo
+          resultado={resultado}
+          fechaInicio={fechaInicio}
+          dias={dias}
+          onCerrar={() => setMostrarReporte(false)}
+        />
+      )}
     </div>
   );
 }
