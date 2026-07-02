@@ -166,14 +166,14 @@ export default function RegistroPedidoPage({ onVolver }: { onVolver: () => void 
                   <input
                     type="number"
                     value={cantidad}
-                    onChange={e => setCantidad(Math.max(1, Math.min(99, Number(e.target.value) || 1)))}
+                    onChange={e => setCantidad(Math.max(1, Math.min(999, Number(e.target.value) || 1)))}
                     min={1}
-                    max={99}
+                    max={999}
                     className="flex-1 bg-transparent text-center text-white text-sm font-bold outline-none py-2.5 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                   />
                   <button
                     type="button"
-                    onClick={() => setCantidad(c => Math.min(99, c + 1))}
+                    onClick={() => setCantidad(c => Math.min(999, c + 1))}
                     className="px-4 py-2.5 text-slate-300 hover:bg-slate-700 hover:text-white transition-colors text-lg font-bold select-none"
                   >
                     +

@@ -24,11 +24,11 @@ public class TabuSearchService {
 
     // Descriptor ligero de un movimiento vecino — reemplaza clonar Solucion completa
     private record Movimiento(
-        Pedido pedido,
-        List<Vuelo> rutaVieja,
-        List<Vuelo> rutaNueva,
-        double nuevoFitness,
-        String atributoTabu
+            Pedido pedido,
+            List<Vuelo> rutaVieja,
+            List<Vuelo> rutaNueva,
+            double nuevoFitness,
+            String atributoTabu
     ) {}
 
     // Variante que recibe el estado acumulado de pasos anteriores en lugar de recalcular el histórico completo
@@ -60,7 +60,6 @@ public class TabuSearchService {
             vuelosPorOrigen.computeIfAbsent(v.getOrigen(), k -> new ArrayList<>()).add(v);
 
         // 0. WARM-UP HISTÓRICO: Pre-llenar la red con los pedidos del pasado usando solo el algoritmo Voraz
-        // Si viene un estadoBaseExterno (modo acumulado), lo usamos directamente sin recalcular el histórico
         Solucion estadoBase;
         if (estadoBaseExterno != null) {
             estadoBase = estadoBaseExterno;
@@ -68,19 +67,16 @@ public class TabuSearchService {
             estadoBase = new Solucion();
             if (pedidosHistoricos != null && !pedidosHistoricos.isEmpty()) {
                 estadoBase = generarSolucionInicialVoraz(pedidosHistoricos, vuelosPorOrigen, mapaAeros);
-                // Nota: El histórico no se optimiza con Tabú porque ya pasó, solo nos interesa su impacto físico
             }
         }
 
-        // 1. Solución inicial voraz para pedidos de simulación (AHORA PARTIENDO DEL ESTADO BASE)
+        // 1. Solución inicial voraz para pedidos de simulación
         Solucion solucionActual = generarSolucionInicialVorazConEstado(pedidosSimulacion, vuelosPorOrigen, mapaAeros, estadoBase);
 
-        // Guardamos también las rutas históricas para que el mapa pueda dibujar los aviones que ya venían volando
         solucionActual.getRutasAsignadas().putAll(estadoBase.getRutasAsignadas());
-
         solucionActual.setFitness(evaluarFitness(solucionActual, pedidosSimulacion, mapaAeros, mapaVuelos));
 
-        // Tracking del mejor global: solo fitness + rutas (sin clonar mapas de ocupación)
+        // Tracking del mejor global
         double mejorFitnessGlobal = solucionActual.getFitness();
         Map<String, List<Vuelo>> mejorRutasGlobal = new HashMap<>(solucionActual.getRutasAsignadas());
 
@@ -90,13 +86,12 @@ public class TabuSearchService {
         // 2. Bucle principal
         for (int iter = 0; iter < iteracionesMaximas; iter++) {
             if (iteracionesSinMejora >= MAX_SIN_MEJORA) {
-                // System.out.println("Parada temprana: " + MAX_SIN_MEJORA + " iteraciones sin mejora.");
                 break;
             }
 
-            // A. Generar movimientos candidatos — SIN clonar la solución
+            // A. Generar movimientos candidatos
             List<Movimiento> movimientos = generarMovimientos(
-                solucionActual, pedidosSimulacion, vuelosPorOrigen, mapaAeros, mapaVuelos);
+                    solucionActual, pedidosSimulacion, vuelosPorOrigen, mapaAeros, mapaVuelos);
 
             // B. Seleccionar mejor movimiento admisible
             Movimiento mejorMovimiento = null;
@@ -112,7 +107,7 @@ public class TabuSearchService {
 
             if (mejorMovimiento == null) break;
 
-            // C. Aplicar el movimiento EN-LUGAR — cero clonado
+            // C. Aplicar el movimiento EN-LUGAR
             registrarImpactoAeropuertos(solucionActual, mejorMovimiento.pedido(), mejorMovimiento.rutaVieja(), -1, mapaAeros);
             registrarImpactoAeropuertos(solucionActual, mejorMovimiento.pedido(), mejorMovimiento.rutaNueva(), +1, mapaAeros);
             solucionActual.getRutasAsignadas().put(mejorMovimiento.pedido().getIdPedido(), mejorMovimiento.rutaNueva());
@@ -127,7 +122,6 @@ public class TabuSearchService {
                 mejorFitnessGlobal = solucionActual.getFitness();
                 mejorRutasGlobal = new HashMap<>(solucionActual.getRutasAsignadas());
                 iteracionesSinMejora = 0;
-                // System.out.println("Iter " + iter + " | Nuevo mejor Fitness: " + mejorFitnessGlobal);
             } else {
                 iteracionesSinMejora++;
             }
@@ -140,7 +134,6 @@ public class TabuSearchService {
         mejorSolucion.setFitness(mejorFitnessGlobal);
         mejorSolucion.setRutasAsignadas(mejorRutasGlobal);
 
-        // Heredar ocupación acumulada de bloques anteriores
         if (estadoBaseExterno != null) {
             mejorSolucion.getOcupacionVuelos().putAll(estadoBaseExterno.getOcupacionVuelos());
             mejorSolucion.getOcupacionAeropuertos().putAll(estadoBaseExterno.getOcupacionAeropuertos());
@@ -154,7 +147,7 @@ public class TabuSearchService {
                 if (ruta != null && !ruta.isEmpty()) {
                     registrarImpactoAeropuertos(mejorSolucion, pedido, ruta, 1, mapaAeros);
                     mejorSolucion.getDetallesEnvios().put(pedido.getIdPedido(),
-                        new Solucion.DetalleEnvio(pedido.getIdCliente(), pedido.getCantidadMaletas(), pedido.getOrigen(), pedido.getDestino()));
+                            new Solucion.DetalleEnvio(pedido.getIdCliente(), pedido.getCantidadMaletas(), pedido.getOrigen(), pedido.getDestino()));
                 }
             }
         }
@@ -166,7 +159,7 @@ public class TabuSearchService {
                 if (ruta != null && !ruta.isEmpty()) {
                     registrarImpactoAeropuertos(mejorSolucion, pedido, ruta, 1, mapaAeros);
                     mejorSolucion.getDetallesEnvios().put(pedido.getIdPedido(),
-                        new Solucion.DetalleEnvio(pedido.getIdCliente(), pedido.getCantidadMaletas(), pedido.getOrigen(), pedido.getDestino()));
+                            new Solucion.DetalleEnvio(pedido.getIdCliente(), pedido.getCantidadMaletas(), pedido.getOrigen(), pedido.getDestino()));
                 }
             }
         }
@@ -180,14 +173,14 @@ public class TabuSearchService {
     // ============================
 
     private Solucion generarSolucionInicialVoraz(List<Pedido> pedidos,
-            Map<String, List<Vuelo>> vuelosPorOrigen,
-            Map<String, Aeropuerto> mapaAeros) {
+                                                 Map<String, List<Vuelo>> vuelosPorOrigen,
+                                                 Map<String, Aeropuerto> mapaAeros) {
         Solucion solInicial = new Solucion();
         for (Pedido pedido : pedidos) {
             List<Vuelo> rutaAsignada = buscarRutaBFS(
-                pedido.getOrigen(), pedido.getDestino(),
-                vuelosPorOrigen, pedido.getFechaRegistro(), mapaAeros,
-                solInicial.getOcupacionVuelos(), pedido.getCantidadMaletas());
+                    pedido.getOrigen(), pedido.getDestino(),
+                    vuelosPorOrigen, pedido.getFechaRegistro(), mapaAeros,
+                    solInicial.getOcupacionVuelos(), pedido.getCantidadMaletas());
             if (!rutaAsignada.isEmpty()) {
                 solInicial.getRutasAsignadas().put(pedido.getIdPedido(), new ArrayList<>(rutaAsignada));
                 registrarImpactoAeropuertos(solInicial, pedido, rutaAsignada, 1, mapaAeros);
@@ -196,20 +189,18 @@ public class TabuSearchService {
         return solInicial;
     }
 
-    // Variante que parte de un estado de ocupación pre-existente (warm-up histórico)
     private Solucion generarSolucionInicialVorazConEstado(List<Pedido> pedidos,
-            Map<String, List<Vuelo>> vuelosPorOrigen,
-            Map<String, Aeropuerto> mapaAeros,
-            Solucion baseState) {
+                                                          Map<String, List<Vuelo>> vuelosPorOrigen,
+                                                          Map<String, Aeropuerto> mapaAeros,
+                                                          Solucion baseState) {
         Solucion solInicial = new Solucion();
-        // Copiar estado de ocupación del warm-up para respetar capacidades ya utilizadas
         solInicial.getOcupacionVuelos().putAll(baseState.getOcupacionVuelos());
         solInicial.getOcupacionAeropuertos().putAll(baseState.getOcupacionAeropuertos());
         for (Pedido pedido : pedidos) {
             List<Vuelo> rutaAsignada = buscarRutaBFS(
-                pedido.getOrigen(), pedido.getDestino(),
-                vuelosPorOrigen, pedido.getFechaRegistro(), mapaAeros,
-                solInicial.getOcupacionVuelos(), pedido.getCantidadMaletas());
+                    pedido.getOrigen(), pedido.getDestino(),
+                    vuelosPorOrigen, pedido.getFechaRegistro(), mapaAeros,
+                    solInicial.getOcupacionVuelos(), pedido.getCantidadMaletas());
             if (!rutaAsignada.isEmpty()) {
                 solInicial.getRutasAsignadas().put(pedido.getIdPedido(), new ArrayList<>(rutaAsignada));
                 registrarImpactoAeropuertos(solInicial, pedido, rutaAsignada, 1, mapaAeros);
@@ -218,14 +209,12 @@ public class TabuSearchService {
         return solInicial;
     }
 
-    // Dijkstra temporal con chequeo de capacidad: solo usa vuelos con espacio disponible.
-    // Si no existe ninguna ruta válida, retorna lista vacía (pedido inasignable = colapso real).
     private List<Vuelo> buscarRutaBFS(String origen, String destino,
-            Map<String, List<Vuelo>> vuelosPorOrigen,
-            LocalDateTime fechaRegistro,
-            Map<String, Aeropuerto> mapaAeros,
-            Map<String, Integer> ocupacionVuelos,
-            int cantidadMaletas) {
+                                      Map<String, List<Vuelo>> vuelosPorOrigen,
+                                      LocalDateTime fechaRegistro,
+                                      Map<String, Aeropuerto> mapaAeros,
+                                      Map<String, Integer> ocupacionVuelos,
+                                      int cantidadMaletas) {
 
         Aeropuerto aeroOrigen = mapaAeros.get(origen);
         if (aeroOrigen == null) return new ArrayList<>();
@@ -240,10 +229,18 @@ public class TabuSearchService {
                 LocalDateTime salidaUTC = calcularProximaSalidaUTC(tiempoInicioUTC, v, aeroOrigen);
                 if (salidaUTC == null) continue;
                 long espera = Duration.between(tiempoInicioUTC, salidaUTC).toMinutes();
-                if (espera > MAX_ESPERA_MINUTOS) continue;
-                // Saltar vuelos sin capacidad suficiente en esa fecha
+                if (espera < 0 || espera > MAX_ESPERA_MINUTOS) continue;
+
                 java.time.LocalDate salidaLocal = salidaUTC.plusHours(aeroOrigen.getGmt()).toLocalDate();
                 String capKey = v.getOrigen() + "-" + v.getDestino() + "-" + v.getHoraSalida().format(java.time.format.DateTimeFormatter.ofPattern("HH:mm:ss")) + "_" + salidaLocal;
+
+                if (v.getDestino().equals(destino)) {
+                    System.out.println("🔎 EVALUANDO VUELO DIRECTO DE RESTICCIÓN: " + v.getOrigen() + " -> " + v.getDestino());
+                    System.out.println("   Hora Salida: " + v.getHoraSalida() + " | Cap Key: " + capKey);
+                    System.out.println("   Espacio ocupado antes de mis maletas: " + ocupacionVuelos.getOrDefault(capKey, 0));
+                    System.out.println("   Mis maletas: " + cantidadMaletas + " | Capacidad Máxima: " + v.getCapacidadMax());
+                    System.out.println("   ¿Supera la capacidad?: " + (ocupacionVuelos.getOrDefault(capKey, 0) + cantidadMaletas > v.getCapacidadMax()));
+                }
                 if (ocupacionVuelos.getOrDefault(capKey, 0) + cantidadMaletas > v.getCapacidadMax()) continue;
                 Aeropuerto aeroDest = mapaAeros.get(v.getDestino());
                 if (aeroDest == null) continue;
@@ -269,9 +266,13 @@ public class TabuSearchService {
                 if (visitados.contains(conexion.getDestino())) continue;
                 LocalDateTime salidaUTC = calcularProximaSalidaUTC(estado.llegadaUTC(), conexion, aeroActual);
                 if (salidaUTC == null) continue;
+
+                // =========================================================================
+                // CAMBIO CLAVE APLICADO: Medir la espera desde el tramo anterior (estado.llegadaUTC())
+                // =========================================================================
                 long espera = Duration.between(estado.llegadaUTC(), salidaUTC).toMinutes();
-                if (espera > MAX_ESPERA_MINUTOS) continue;
-                // Saltar vuelos sin capacidad suficiente en esa fecha
+                if (espera < 0 || espera > MAX_ESPERA_MINUTOS) continue;
+
                 java.time.LocalDate salidaLocal = salidaUTC.plusHours(aeroActual.getGmt()).toLocalDate();
                 String capKey = conexion.getOrigen() + "-" + conexion.getDestino() + "-" + conexion.getHoraSalida().format(java.time.format.DateTimeFormatter.ofPattern("HH:mm:ss")) + "_" + salidaLocal;
                 if (ocupacionVuelos.getOrDefault(capKey, 0) + cantidadMaletas > conexion.getCapacidadMax()) continue;
@@ -281,7 +282,7 @@ public class TabuSearchService {
                 List<Vuelo> nuevaRuta = new ArrayList<>(estado.ruta());
                 nuevaRuta.add(conexion);
                 cola.add(new EstadoBFS(nuevaRuta, salidaUTC.plusMinutes(duracion),
-                    estado.minutosTotal() + espera + duracion));
+                        estado.minutosTotal() + espera + duracion));
             }
         }
         return new ArrayList<>();
@@ -292,7 +293,7 @@ public class TabuSearchService {
     }
 
     private double evaluarFitness(Solucion solucion, List<Pedido> pedidos,
-            Map<String, Aeropuerto> mapaAeros, Map<String, Vuelo> mapaVuelos) {
+                                  Map<String, Aeropuerto> mapaAeros, Map<String, Vuelo> mapaVuelos) {
         double costoTotal = 0.0;
         for (Pedido pedido : pedidos) {
             List<Vuelo> ruta = solucion.getRutasAsignadas().get(pedido.getIdPedido());
@@ -300,6 +301,15 @@ public class TabuSearchService {
 
             long tiempoTotal = 0;
             Aeropuerto origenPedido = mapaAeros.get(pedido.getOrigen());
+            if (origenPedido != null) {
+                LocalDateTime tiempoInicioUTC = pedido.getFechaRegistro().minusHours(origenPedido.getGmt());
+                LocalDateTime salidaUTC = TimeCalculator.calcularProximaSalidaUTC(tiempoInicioUTC, ruta.get(0), origenPedido);
+                if (salidaUTC != null) {
+                    long espInicial = Duration.between(tiempoInicioUTC, salidaUTC).toMinutes();
+                    if (espInicial < 0) espInicial += 1440; // Escudo protector de medianoche
+                    tiempoTotal += espInicial;
+                }
+            }
             Aeropuerto destinoPedido = mapaAeros.get(pedido.getDestino());
 
             if (!ruta.get(ruta.size() - 1).getDestino().equals(pedido.getDestino()))
@@ -311,11 +321,19 @@ public class TabuSearchService {
                 Aeropuerto da = mapaAeros.get(va.getDestino());
                 if (oa == null) throw new IllegalArgumentException("Aeropuerto no encontrado: '" + va.getOrigen() + "'");
                 if (da == null) throw new IllegalArgumentException("Aeropuerto no encontrado: '" + va.getDestino() + "'");
-                tiempoTotal += TimeCalculator.calcularDuracionVueloMinutos(va, oa, da);
+
+                long dur = TimeCalculator.calcularDuracionVueloMinutos(va, oa, da);
+                if (dur < 0) dur += 1440;
+                tiempoTotal += dur;
+
                 if (i < ruta.size() - 1) {
                     Vuelo vs = ruta.get(i + 1);
                     if (!TimeCalculator.esConexionFisicamentePosible(va, vs)) { costoTotal += 999999.0; break; }
-                    tiempoTotal += TimeCalculator.calcularTiempoEsperaMinutos(va, vs);
+
+                    // CORRECCIÓN LOGÍSTICA CRÍTICA:
+                    long esp = TimeCalculator.calcularTiempoEsperaMinutos(va, vs);
+                    if (esp < 0) esp += 1440; // Evita que las escalas resten minutos falsos
+                    tiempoTotal += esp;
                 }
             }
             tiempoTotal += TimeCalculator.TIEMPO_RECOJO_FINAL;
@@ -338,12 +356,11 @@ public class TabuSearchService {
     }
 
     private List<Movimiento> generarMovimientos(Solucion actual, List<Pedido> pedidos,
-            Map<String, List<Vuelo>> vuelosPorOrigen,
-            Map<String, Aeropuerto> mapaAeros, Map<String, Vuelo> mapaVuelos) {
+                                                Map<String, List<Vuelo>> vuelosPorOrigen,
+                                                Map<String, Aeropuerto> mapaAeros, Map<String, Vuelo> mapaVuelos) {
         List<Movimiento> movimientos = new ArrayList<>();
         Random random = new Random();
 
-        // Identificar vuelos saturados (sin sufijo de fecha)
         Set<String> baseKeysSaturados = new HashSet<>();
         for (Map.Entry<String, Integer> e : actual.getOcupacionVuelos().entrySet()) {
             String baseKey = e.getKey().split("_")[0];
@@ -352,7 +369,6 @@ public class TabuSearchService {
                 baseKeysSaturados.add(baseKey);
         }
 
-        // Muestra de trabajo: 500 pedidos aleatorios para separar en saturados vs normales
         List<Pedido> muestra = new ArrayList<>(pedidos);
         Collections.shuffle(muestra, random);
         if (muestra.size() > 500) muestra = muestra.subList(0, 500);
@@ -362,16 +378,14 @@ public class TabuSearchService {
         for (Pedido p : muestra) {
             List<Vuelo> ruta = actual.getRutasAsignadas().get(p.getIdPedido());
             boolean usaSaturado = ruta != null && ruta.stream()
-                .anyMatch(v -> baseKeysSaturados.contains(v.getOrigen() + "-" + v.getDestino() + "-" + v.getHoraSalida()));
+                    .anyMatch(v -> baseKeysSaturados.contains(v.getOrigen() + "-" + v.getDestino() + "-" + v.getHoraSalida()));
             if (usaSaturado) enSaturados.add(p);
             else             normales.add(p);
         }
 
-        // 75 de saturados + 25 de normales = 100 candidatos
         List<Pedido> candidatos = new ArrayList<>();
         candidatos.addAll(enSaturados.subList(0, Math.min(75, enSaturados.size())));
         candidatos.addAll(normales.subList(0, Math.min(25, normales.size())));
-        // Si no hay suficientes saturados, completar con normales
         if (candidatos.size() < 100) {
             int faltantes = 100 - candidatos.size();
             int yaUsados = Math.min(25, normales.size());
@@ -384,10 +398,10 @@ public class TabuSearchService {
             if (rutaVieja == null || rutaVieja.isEmpty()) continue;
 
             List<Vuelo> rutaNueva = buscarRutaAlternativaBFS(
-                pedido.getOrigen(), pedido.getDestino(),
-                vuelosPorOrigen, rutaVieja.get(0),
-                pedido.getFechaRegistro(), mapaAeros, baseKeysSaturados,
-                actual.getOcupacionVuelos(), pedido.getCantidadMaletas());
+                    pedido.getOrigen(), pedido.getDestino(),
+                    vuelosPorOrigen, rutaVieja.get(0),
+                    pedido.getFechaRegistro(), mapaAeros, baseKeysSaturados,
+                    actual.getOcupacionVuelos(), pedido.getCantidadMaletas());
 
             if (rutaNueva.isEmpty() || rutaNueva.equals(rutaVieja)) continue;
 
@@ -397,17 +411,17 @@ public class TabuSearchService {
             double nuevoFitness = actual.getFitness() - costoViejo + costoNuevo + deltaPen;
 
             String firmaVieja = rutaVieja.stream()
-                .map(v -> v.getOrigen() + v.getDestino() + v.getHoraSalida())
-                .collect(Collectors.joining("|"));
+                    .map(v -> v.getOrigen() + v.getDestino() + v.getHoraSalida())
+                    .collect(Collectors.joining("|"));
             movimientos.add(new Movimiento(pedido, rutaVieja, rutaNueva, nuevoFitness,
-                pedido.getIdPedido() + ":" + firmaVieja));
+                    pedido.getIdPedido() + ":" + firmaVieja));
         }
         return movimientos;
     }
 
     private double calcularDeltaPenalizaciones(Solucion actual, Pedido pedido,
-            List<Vuelo> rutaAntigua, List<Vuelo> rutaNueva,
-            Map<String, Vuelo> mapaVuelos, Map<String, Aeropuerto> mapaAeros) {
+                                               List<Vuelo> rutaAntigua, List<Vuelo> rutaNueva,
+                                               Map<String, Vuelo> mapaVuelos, Map<String, Aeropuerto> mapaAeros) {
         double delta = 0.0;
         int cantidad = pedido.getCantidadMaletas();
 
@@ -451,13 +465,13 @@ public class TabuSearchService {
     }
 
     private List<Vuelo> buscarRutaAlternativaBFS(String origen, String destino,
-            Map<String, List<Vuelo>> vuelosPorOrigen,
-            Vuelo vueloProhibido,
-            LocalDateTime fechaRegistro,
-            Map<String, Aeropuerto> mapaAeros,
-            Set<String> vuelosSaturados,
-            Map<String, Integer> ocupacionVuelos,
-            int cantidadMaletas) {
+                                                 Map<String, List<Vuelo>> vuelosPorOrigen,
+                                                 Vuelo vueloProhibido,
+                                                 LocalDateTime fechaRegistro,
+                                                 Map<String, Aeropuerto> mapaAeros,
+                                                 Set<String> vuelosSaturados,
+                                                 Map<String, Integer> ocupacionVuelos,
+                                                 int cantidadMaletas) {
 
         Aeropuerto aeroOrigen = mapaAeros.get(origen);
         if (aeroOrigen == null) return new ArrayList<>();
@@ -473,7 +487,7 @@ public class TabuSearchService {
                 LocalDateTime salidaUTC = calcularProximaSalidaUTC(tiempoInicioUTC, v, aeroOrigen);
                 if (salidaUTC == null) continue;
                 long espera = Duration.between(tiempoInicioUTC, salidaUTC).toMinutes();
-                if (espera > MAX_ESPERA_MINUTOS) continue;
+                if (espera < 0 || espera > MAX_ESPERA_MINUTOS) continue;
                 java.time.LocalDate salidaLocal = salidaUTC.plusHours(aeroOrigen.getGmt()).toLocalDate();
                 String capKey = v.getOrigen() + "-" + v.getDestino() + "-" + v.getHoraSalida().format(java.time.format.DateTimeFormatter.ofPattern("HH:mm:ss")) + "_" + salidaLocal;
                 if (ocupacionVuelos.getOrDefault(capKey, 0) + cantidadMaletas > v.getCapacidadMax()) continue;
@@ -502,8 +516,13 @@ public class TabuSearchService {
                 if (visitados.contains(c.getDestino())) continue;
                 LocalDateTime salidaUTC = calcularProximaSalidaUTC(estado.llegadaUTC(), c, aeroAp);
                 if (salidaUTC == null) continue;
+
+                // =========================================================================
+                // CAMBIO CLAVE APLICADO: Medir la espera desde el tramo anterior (estado.llegadaUTC())
+                // =========================================================================
                 long espera = Duration.between(estado.llegadaUTC(), salidaUTC).toMinutes();
-                if (espera > MAX_ESPERA_MINUTOS) continue;
+                if (espera < 0 || espera > MAX_ESPERA_MINUTOS) continue;
+
                 java.time.LocalDate salidaLocal = salidaUTC.plusHours(aeroAp.getGmt()).toLocalDate();
                 String capKey = c.getOrigen() + "-" + c.getDestino() + "-" + c.getHoraSalida().format(java.time.format.DateTimeFormatter.ofPattern("HH:mm:ss")) + "_" + salidaLocal;
                 if (ocupacionVuelos.getOrDefault(capKey, 0) + cantidadMaletas > c.getCapacidadMax()) continue;
@@ -514,7 +533,7 @@ public class TabuSearchService {
                 List<Vuelo> nr = new ArrayList<>(estado.ruta());
                 nr.add(c);
                 cola.add(new EstadoBFS(nr, salidaUTC.plusMinutes(dur),
-                    estado.minutosTotal() + espera + dur + pen));
+                        estado.minutosTotal() + espera + dur + pen));
             }
         }
         return new ArrayList<>();
@@ -526,7 +545,7 @@ public class TabuSearchService {
     }
 
     private void registrarImpactoAeropuertos(Solucion solucion, Pedido pedido,
-            List<Vuelo> ruta, int factor, Map<String, Aeropuerto> mapaAeros) {
+                                             List<Vuelo> ruta, int factor, Map<String, Aeropuerto> mapaAeros) {
         if (ruta == null || ruta.isEmpty()) return;
         LocalDateTime t = pedido.getFechaRegistro();
         int cantidad = pedido.getCantidadMaletas() * factor;
@@ -538,11 +557,10 @@ public class TabuSearchService {
         for (int i = 0; i < ruta.size(); i++) {
             Vuelo v = ruta.get(i);
             String idVueloUnico = v.getOrigen() + "-" + v.getDestino() + "-"
-                + v.getHoraSalida().format(java.time.format.DateTimeFormatter.ofPattern("HH:mm:ss"))
-                + "_" + t.toLocalDate();
+                    + v.getHoraSalida().format(java.time.format.DateTimeFormatter.ofPattern("HH:mm:ss"))
+                    + "_" + t.toLocalDate();
             solucion.getOcupacionVuelos().merge(idVueloUnico, cantidad, (a, b) -> Math.max(0, a + b));
 
-            // Guardar la fecha de salida de este tramo
             if (factor > 0) fechas.add(t.toLocalDate().toString());
 
             Aeropuerto orig = mapaAeros.get(v.getOrigen()), dest = mapaAeros.get(v.getDestino());
@@ -555,34 +573,50 @@ public class TabuSearchService {
             if (i < ruta.size() - 1)
                 t = t.plusMinutes(TimeCalculator.calcularTiempoEsperaMinutos(v, ruta.get(i + 1)));
         }
-        // Solo registrar fechas cuando se suma (factor > 0), no cuando se resta en movimientos Tabú
         if (factor > 0 && !fechas.isEmpty())
             solucion.getFechasTramos().put(pedido.getIdPedido(), fechas);
     }
 
     private double calcularCostoRutaUnica(Pedido pedido, List<Vuelo> ruta,
-            Map<String, Aeropuerto> mapaAeros) {
+                                          Map<String, Aeropuerto> mapaAeros) {
         if (ruta == null || ruta.isEmpty()) return 999999.0;
         if (!ruta.get(ruta.size() - 1).getDestino().equals(pedido.getDestino())) return 999999.0;
 
         long tiempo = 0;
+        Aeropuerto origenPedido = mapaAeros.get(pedido.getOrigen());
+        if (origenPedido != null) {
+            LocalDateTime tiempoInicioUTC = pedido.getFechaRegistro().minusHours(origenPedido.getGmt());
+            LocalDateTime salidaUTC = TimeCalculator.calcularProximaSalidaUTC(tiempoInicioUTC, ruta.get(0), origenPedido);
+            if (salidaUTC != null) {
+                long espInicial = Duration.between(tiempoInicioUTC, salidaUTC).toMinutes();
+                if (espInicial < 0) espInicial += 1440;
+                tiempo += espInicial;
+            }
+        }
         for (int i = 0; i < ruta.size(); i++) {
             Vuelo va = ruta.get(i);
-            tiempo += TimeCalculator.calcularDuracionVueloMinutos(
-                va, mapaAeros.get(va.getOrigen()), mapaAeros.get(va.getDestino()));
+
+            long dur = TimeCalculator.calcularDuracionVueloMinutos(va, mapaAeros.get(va.getOrigen()), mapaAeros.get(va.getDestino()));
+            if (dur < 0) dur += 1440;
+            tiempo += dur;
+
             if (i < ruta.size() - 1) {
                 if (!TimeCalculator.esConexionFisicamentePosible(va, ruta.get(i + 1))) return 999999.0;
-                tiempo += TimeCalculator.calcularTiempoEsperaMinutos(va, ruta.get(i + 1));
+
+                // CORRECCIÓN LOGÍSTICA CRÍTICA:
+                long esp = TimeCalculator.calcularTiempoEsperaMinutos(va, ruta.get(i + 1));
+                if (esp < 0) esp += 1440; // Evita que las escalas resten minutos falsos
+                tiempo += esp;
             }
         }
         tiempo += TimeCalculator.TIEMPO_RECOJO_FINAL;
         boolean mismoCont = mapaAeros.get(pedido.getOrigen()).getContinente()
-            .equals(mapaAeros.get(pedido.getDestino()).getContinente());
+                .equals(mapaAeros.get(pedido.getDestino()).getContinente());
         return tiempo + TimeCalculator.calcularPenalizacionTiempo(tiempo, mismoCont);
     }
 
     public void realizarDiagnosticoColapso(Solucion sol, List<Pedido> pedidos,
-            Map<String, Aeropuerto> mapaAeros, Map<String, Vuelo> mapaVuelos) {
+                                           Map<String, Aeropuerto> mapaAeros, Map<String, Vuelo> mapaVuelos) {
         System.out.println("\n========== DIAGNÓSTICO DE COLAPSO LOGÍSTICO ==========");
         int fallosSLA = 0, fallosVuelo = 0, fallosAero = 0;
 
@@ -594,7 +628,7 @@ public class TabuSearchService {
             long lim = o.getContinente().equals(d.getContinente()) ? 1440 : 2880;
             if (t > lim) {
                 System.out.printf("[FALLO SLA] Pedido %s: %d min > %d min (retraso %d min)%n",
-                    p.getIdPedido(), t, lim, t - lim);
+                        p.getIdPedido(), t, lim, t - lim);
                 fallosSLA++;
             }
         }
@@ -618,12 +652,12 @@ public class TabuSearchService {
     }
 
     private long calcularSoloTiempoEnMinutos(Pedido p, List<Vuelo> ruta,
-            Map<String, Aeropuerto> mapaAeros) {
+                                             Map<String, Aeropuerto> mapaAeros) {
         long m = 0;
         for (int i = 0; i < ruta.size(); i++) {
             Vuelo v = ruta.get(i);
             m += TimeCalculator.calcularDuracionVueloMinutos(
-                v, mapaAeros.get(v.getOrigen()), mapaAeros.get(v.getDestino()));
+                    v, mapaAeros.get(v.getOrigen()), mapaAeros.get(v.getDestino()));
             if (i < ruta.size() - 1)
                 m += TimeCalculator.calcularTiempoEsperaMinutos(v, ruta.get(i + 1));
         }

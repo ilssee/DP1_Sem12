@@ -6,6 +6,7 @@ import {
   Activity,
   FileText,
   Calendar,
+  OctagonAlert,
 } from "lucide-react";
 import MapArea from "./components/MapArea";
 import { aeropuertosDB, aeropuertoContinente } from "./data/coordenadas";
@@ -1616,6 +1617,11 @@ function App() {
           >
             <Calendar size={18} /> Simulación por periodo
           </button>
+          <div
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-colors ${vistaActiva === "mapa" ? "bg-tasf-green text-white" : "text-slate-400 hover:bg-slate-800 hover:text-white"}`}
+          >
+            <OctagonAlert size={18}/> Simulación hasta colapso
+          </div>
           <button
             onClick={() => setVistaActiva("cargar")}
             className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-colors ${vistaActiva === "cargar" ? "bg-tasf-green text-white" : "text-slate-400 hover:bg-slate-800 hover:text-white"}`}
