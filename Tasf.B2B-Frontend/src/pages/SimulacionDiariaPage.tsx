@@ -344,8 +344,6 @@ export default function SimulacionDiariaPage({
   return (
     // 3. CAMBIO DE CLASES RAÍZ: Se reemplaza h-screen por h-full flex-1 para evitar el desbordamiento
     <div className="h-full flex-1 min-h-0 flex flex-col relative font-sans bg-slate-950">
-      // 2. CORRECCIÓN Z-INDEX: absolute/relative con z-[1000] para sobreponerse
-      al mapa
       <div className="bg-slate-900 border-b border-slate-800 px-6 py-4 shadow-sm relative z-[1000]">
         <div className="flex items-center gap-3">
           <Calendar className="text-tasf-green" size={22} />
@@ -479,7 +477,13 @@ export default function SimulacionDiariaPage({
                     <p className="text-xs text-slate-600">Sin envíos</p>
                   ) : (
                     <div className="space-y-1.5">
-                      {[...pedidos].reverse().map((pedido) => (
+                      {[...pedidos].reverse().map((pedido) => {
+                        const ruta = resultadoBackend?.rutasPlanificadas?.[pedido.idPedido];
+                        const paradas = ruta
+                          ? [ruta[0].origen, ...ruta.map(v => v.destino)]
+                          : [pedido.origen, pedido.destino];
+                        const esDirecto = paradas.length === 2;
+                        return (
                         <div
                           key={pedido.idPedido}
                           className="rounded-lg bg-slate-900 border border-slate-700 px-2.5 py-2"
@@ -493,10 +497,14 @@ export default function SimulacionDiariaPage({
                             </span>
                           </div>
                           <p className="text-xs font-semibold text-white mt-0.5">
-                            {pedido.origen} → {pedido.destino}
+                            {paradas.join(" → ")}
+                          </p>
+                          <p className="text-[10px] mt-0.5 text-slate-500">
+                            {esDirecto ? "✈ Directo" : `✈ ${paradas.length - 2} escala${paradas.length - 2 > 1 ? "s" : ""}`}
                           </p>
                         </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   )}
                 </div>

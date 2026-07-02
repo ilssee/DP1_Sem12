@@ -15,6 +15,8 @@ public class Solucion {
     private Map<String, DetalleEnvio> detallesEnvios = new HashMap<>();
     // pedidoId → lista de fechas (una por tramo), e.g. ["2026-08-16", "2026-08-17"]
     private Map<String, List<String>> fechasTramos = new HashMap<>();
+    // Todas las rutas planificadas en hora Lima (activas o en espera), para visualización
+    private Map<String, List<Vuelo>> rutasPlanificadas = new HashMap<>();
 
     @Data
     @AllArgsConstructor

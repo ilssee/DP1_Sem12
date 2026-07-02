@@ -22,6 +22,7 @@ export interface Solucion {
   capacidadesAeropuertos: Record<string, number>;
   detallesEnvios: Record<string, DetalleEnvio>;
   fechasTramos: Record<string, string[]>;
+  rutasPlanificadas: Record<string, Vuelo[]>;
 
   // Métricas para el panel inferior
   totalPedidos: number;

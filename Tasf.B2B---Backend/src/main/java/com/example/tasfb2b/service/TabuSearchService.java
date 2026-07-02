@@ -18,6 +18,8 @@ public class TabuSearchService {
     private static final int TABU_TENURE = 30;
     private static final int MAX_SIN_MEJORA = 200;
     private static final int MAX_ESPERA_MINUTOS = 18 * 60;
+    // Penalización por cada tramo de escala adicional (favorece vuelos directos)
+    private static final long PENALIZACION_TRAMO = 180L;
 
     // Estado Dijkstra: ruta parcial + llegada UTC + minutos totales desde creación del pedido
     private record EstadoBFS(List<Vuelo> ruta, LocalDateTime llegadaUTC, long minutosTotal) {}
@@ -226,7 +228,7 @@ public class TabuSearchService {
 
         if (vuelosPorOrigen.containsKey(origen)) {
             for (Vuelo v : vuelosPorOrigen.get(origen)) {
-                LocalDateTime salidaUTC = calcularProximaSalidaUTC(tiempoInicioUTC, v, aeroOrigen);
+                LocalDateTime salidaUTC = TimeCalculator.calcularProximaSalidaUTC(tiempoInicioUTC, v, aeroOrigen, 0);
                 if (salidaUTC == null) continue;
                 long espera = Duration.between(tiempoInicioUTC, salidaUTC).toMinutes();
                 if (espera < 0 || espera > MAX_ESPERA_MINUTOS) continue;
@@ -281,8 +283,9 @@ public class TabuSearchService {
                 long duracion = TimeCalculator.calcularDuracionVueloMinutos(conexion, aeroActual, aeroDest);
                 List<Vuelo> nuevaRuta = new ArrayList<>(estado.ruta());
                 nuevaRuta.add(conexion);
+                long penalidad = estado.ruta().size() * PENALIZACION_TRAMO;
                 cola.add(new EstadoBFS(nuevaRuta, salidaUTC.plusMinutes(duracion),
-                        estado.minutosTotal() + espera + duracion));
+                        estado.minutosTotal() + espera + duracion + penalidad));
             }
         }
         return new ArrayList<>();
@@ -299,47 +302,61 @@ public class TabuSearchService {
             List<Vuelo> ruta = solucion.getRutasAsignadas().get(pedido.getIdPedido());
             if (ruta == null || ruta.isEmpty()) { costoTotal += 999999.0; continue; }
 
-            long tiempoTotal = 0;
             Aeropuerto origenPedido = mapaAeros.get(pedido.getOrigen());
-            if (origenPedido != null) {
-                LocalDateTime tiempoInicioUTC = pedido.getFechaRegistro().minusHours(origenPedido.getGmt());
-                LocalDateTime salidaUTC = TimeCalculator.calcularProximaSalidaUTC(tiempoInicioUTC, ruta.get(0), origenPedido);
-                if (salidaUTC != null) {
-                    long espInicial = Duration.between(tiempoInicioUTC, salidaUTC).toMinutes();
-                    if (espInicial < 0) espInicial += 1440; // Escudo protector de medianoche
-                    tiempoTotal += espInicial;
-                }
-            }
             Aeropuerto destinoPedido = mapaAeros.get(pedido.getDestino());
 
             if (!ruta.get(ruta.size() - 1).getDestino().equals(pedido.getDestino()))
                 costoTotal += 999999.0;
 
+            long tiempoTotal = 0;
+            LocalDateTime corrienteUTC = null;
+            if (origenPedido != null) {
+                LocalDateTime tiempoInicioUTC = pedido.getFechaRegistro().minusHours(origenPedido.getGmt());
+                LocalDateTime salidaUTC = TimeCalculator.calcularProximaSalidaUTC(tiempoInicioUTC, ruta.get(0), origenPedido, 0);
+                if (salidaUTC != null) {
+                    long espInicial = Duration.between(tiempoInicioUTC, salidaUTC).toMinutes();
+                    if (espInicial < 0) espInicial = 0;
+                    tiempoTotal += espInicial;
+                    corrienteUTC = salidaUTC;
+                }
+            }
+
             for (int i = 0; i < ruta.size(); i++) {
                 Vuelo va = ruta.get(i);
                 Aeropuerto oa = mapaAeros.get(va.getOrigen());
                 Aeropuerto da = mapaAeros.get(va.getDestino());
-                if (oa == null) throw new IllegalArgumentException("Aeropuerto no encontrado: '" + va.getOrigen() + "'");
-                if (da == null) throw new IllegalArgumentException("Aeropuerto no encontrado: '" + va.getDestino() + "'");
+                if (oa == null || da == null) { costoTotal += 999999.0; break; }
 
                 long dur = TimeCalculator.calcularDuracionVueloMinutos(va, oa, da);
                 if (dur < 0) dur += 1440;
                 tiempoTotal += dur;
+                if (corrienteUTC != null) corrienteUTC = corrienteUTC.plusMinutes(dur);
 
                 if (i < ruta.size() - 1) {
                     Vuelo vs = ruta.get(i + 1);
-                    if (!TimeCalculator.esConexionFisicamentePosible(va, vs)) { costoTotal += 999999.0; break; }
+                    Aeropuerto aeroVs = mapaAeros.get(vs.getOrigen());
+                    if (aeroVs == null) { costoTotal += 999999.0; break; }
 
-                    // CORRECCIÓN LOGÍSTICA CRÍTICA:
-                    long esp = TimeCalculator.calcularTiempoEsperaMinutos(va, vs);
-                    if (esp < 0) esp += 1440; // Evita que las escalas resten minutos falsos
-                    tiempoTotal += esp;
+                    if (corrienteUTC != null) {
+                        LocalDateTime proxSalida = TimeCalculator.calcularProximaSalidaUTC(corrienteUTC, vs, aeroVs);
+                        if (proxSalida == null) { costoTotal += 999999.0; break; }
+                        long esp = Duration.between(corrienteUTC, proxSalida).toMinutes();
+                        if (esp < TimeCalculator.TIEMPO_MINIMO_ESCALA || esp > MAX_ESPERA_MINUTOS) { costoTotal += 999999.0; break; }
+                        tiempoTotal += esp;
+                        corrienteUTC = proxSalida;
+                    } else {
+                        long esp = TimeCalculator.calcularTiempoEsperaMinutos(va, vs);
+                        if (esp < TimeCalculator.TIEMPO_MINIMO_ESCALA) { costoTotal += 999999.0; break; }
+                        tiempoTotal += esp;
+                    }
                 }
             }
             tiempoTotal += TimeCalculator.TIEMPO_RECOJO_FINAL;
             costoTotal += tiempoTotal;
-            boolean mismoCont = origenPedido.getContinente().equals(destinoPedido.getContinente());
-            costoTotal += TimeCalculator.calcularPenalizacionTiempo(tiempoTotal, mismoCont);
+            if (origenPedido != null && destinoPedido != null) {
+                boolean mismoCont = origenPedido.getContinente().equals(destinoPedido.getContinente());
+                costoTotal += TimeCalculator.calcularPenalizacionTiempo(tiempoTotal, mismoCont);
+            }
         }
 
         for (Map.Entry<String, Integer> e : solucion.getOcupacionVuelos().entrySet()) {
@@ -424,43 +441,81 @@ public class TabuSearchService {
                                                Map<String, Vuelo> mapaVuelos, Map<String, Aeropuerto> mapaAeros) {
         double delta = 0.0;
         int cantidad = pedido.getCantidadMaletas();
+        java.time.format.DateTimeFormatter fmt = java.time.format.DateTimeFormatter.ofPattern("HH:mm:ss");
 
-        LocalDateTime t = pedido.getFechaRegistro();
-        for (int i = 0; i < rutaAntigua.size(); i++) {
-            Vuelo v = rutaAntigua.get(i);
-            String key = v.getOrigen() + "-" + v.getDestino() + "-" + v.getHoraSalida().format(java.time.format.DateTimeFormatter.ofPattern("HH:mm:ss")) + "_" + t.toLocalDate();
-            Vuelo vr = mapaVuelos.get(v.getOrigen() + "-" + v.getDestino() + "-" + v.getHoraSalida());
-            if (vr != null) {
-                int ocupAntes = actual.getOcupacionVuelos().getOrDefault(key, 0);
-                if (ocupAntes > vr.getCapacidadMax()) {
-                    delta -= ((ocupAntes - vr.getCapacidadMax()) - Math.max(0, (ocupAntes - cantidad) - vr.getCapacidadMax())) * 5000.0;
+        Aeropuerto aeroOrigen = mapaAeros.get(pedido.getOrigen());
+        if (aeroOrigen == null) return 0.0;
+        LocalDateTime inicioUTC = pedido.getFechaRegistro().minusHours(aeroOrigen.getGmt());
+
+        // Ruta antigua: calcular qué saturación se alivia al quitarla
+        if (!rutaAntigua.isEmpty()) {
+            LocalDateTime salidaUTC = TimeCalculator.calcularProximaSalidaUTC(inicioUTC, rutaAntigua.get(0), aeroOrigen);
+            LocalDateTime corrienteUTC = salidaUTC != null ? salidaUTC : inicioUTC;
+            for (int i = 0; i < rutaAntigua.size(); i++) {
+                Vuelo v = rutaAntigua.get(i);
+                Aeropuerto orig = mapaAeros.get(v.getOrigen());
+                Aeropuerto dest = mapaAeros.get(v.getDestino());
+                if (orig == null || dest == null) break;
+
+                java.time.LocalDate salidaLocalDate = corrienteUTC.plusHours(orig.getGmt()).toLocalDate();
+                String key = v.getOrigen() + "-" + v.getDestino() + "-" + v.getHoraSalida().format(fmt) + "_" + salidaLocalDate;
+                Vuelo vr = mapaVuelos.get(v.getOrigen() + "-" + v.getDestino() + "-" + v.getHoraSalida());
+                if (vr != null) {
+                    int ocupAntes = actual.getOcupacionVuelos().getOrDefault(key, 0);
+                    if (ocupAntes > vr.getCapacidadMax()) {
+                        delta -= ((ocupAntes - vr.getCapacidadMax()) - Math.max(0, (ocupAntes - cantidad) - vr.getCapacidadMax())) * 5000.0;
+                    }
+                }
+
+                long dur = TimeCalculator.calcularDuracionVueloMinutos(v, orig, dest);
+                corrienteUTC = corrienteUTC.plusMinutes(dur);
+
+                if (i < rutaAntigua.size() - 1) {
+                    Vuelo vSig = rutaAntigua.get(i + 1);
+                    Aeropuerto aeroSig = mapaAeros.get(vSig.getOrigen());
+                    if (aeroSig != null) {
+                        LocalDateTime proxSalida = TimeCalculator.calcularProximaSalidaUTC(corrienteUTC, vSig, aeroSig);
+                        if (proxSalida != null) corrienteUTC = proxSalida;
+                    }
                 }
             }
-            Aeropuerto orig = mapaAeros.get(v.getOrigen()), dest = mapaAeros.get(v.getDestino());
-            if (orig != null && dest != null)
-                t = t.plusMinutes(TimeCalculator.calcularDuracionVueloMinutos(v, orig, dest));
-            if (i < rutaAntigua.size() - 1)
-                t = t.plusMinutes(TimeCalculator.calcularTiempoEsperaMinutos(v, rutaAntigua.get(i + 1)));
         }
 
-        t = pedido.getFechaRegistro();
-        for (int i = 0; i < rutaNueva.size(); i++) {
-            Vuelo v = rutaNueva.get(i);
-            String key = v.getOrigen() + "-" + v.getDestino() + "-" + v.getHoraSalida().format(java.time.format.DateTimeFormatter.ofPattern("HH:mm:ss")) + "_" + t.toLocalDate();
-            Vuelo vr = mapaVuelos.get(v.getOrigen() + "-" + v.getDestino() + "-" + v.getHoraSalida());
-            if (vr != null) {
-                int ocupActual  = actual.getOcupacionVuelos().getOrDefault(key, 0);
-                int ocupDespues = ocupActual + cantidad;
-                if (ocupDespues > vr.getCapacidadMax()) {
-                    delta += (ocupDespues - vr.getCapacidadMax() - Math.max(0, ocupActual - vr.getCapacidadMax())) * 5000.0;
+        // Ruta nueva: calcular qué saturación se añade al aplicarla
+        if (!rutaNueva.isEmpty()) {
+            LocalDateTime salidaUTC = TimeCalculator.calcularProximaSalidaUTC(inicioUTC, rutaNueva.get(0), aeroOrigen);
+            LocalDateTime corrienteUTC = salidaUTC != null ? salidaUTC : inicioUTC;
+            for (int i = 0; i < rutaNueva.size(); i++) {
+                Vuelo v = rutaNueva.get(i);
+                Aeropuerto orig = mapaAeros.get(v.getOrigen());
+                Aeropuerto dest = mapaAeros.get(v.getDestino());
+                if (orig == null || dest == null) break;
+
+                java.time.LocalDate salidaLocalDate = corrienteUTC.plusHours(orig.getGmt()).toLocalDate();
+                String key = v.getOrigen() + "-" + v.getDestino() + "-" + v.getHoraSalida().format(fmt) + "_" + salidaLocalDate;
+                Vuelo vr = mapaVuelos.get(v.getOrigen() + "-" + v.getDestino() + "-" + v.getHoraSalida());
+                if (vr != null) {
+                    int ocupActual  = actual.getOcupacionVuelos().getOrDefault(key, 0);
+                    int ocupDespues = ocupActual + cantidad;
+                    if (ocupDespues > vr.getCapacidadMax()) {
+                        delta += (ocupDespues - vr.getCapacidadMax() - Math.max(0, ocupActual - vr.getCapacidadMax())) * 5000.0;
+                    }
+                }
+
+                long dur = TimeCalculator.calcularDuracionVueloMinutos(v, orig, dest);
+                corrienteUTC = corrienteUTC.plusMinutes(dur);
+
+                if (i < rutaNueva.size() - 1) {
+                    Vuelo vSig = rutaNueva.get(i + 1);
+                    Aeropuerto aeroSig = mapaAeros.get(vSig.getOrigen());
+                    if (aeroSig != null) {
+                        LocalDateTime proxSalida = TimeCalculator.calcularProximaSalidaUTC(corrienteUTC, vSig, aeroSig);
+                        if (proxSalida != null) corrienteUTC = proxSalida;
+                    }
                 }
             }
-            Aeropuerto orig = mapaAeros.get(v.getOrigen()), dest = mapaAeros.get(v.getDestino());
-            if (orig != null && dest != null)
-                t = t.plusMinutes(TimeCalculator.calcularDuracionVueloMinutos(v, orig, dest));
-            if (i < rutaNueva.size() - 1)
-                t = t.plusMinutes(TimeCalculator.calcularTiempoEsperaMinutos(v, rutaNueva.get(i + 1)));
         }
+
         return delta;
     }
 
@@ -484,7 +539,7 @@ public class TabuSearchService {
         if (vuelosPorOrigen.containsKey(origen)) {
             for (Vuelo v : vuelosPorOrigen.get(origen)) {
                 if (v.equals(vueloProhibido)) continue;
-                LocalDateTime salidaUTC = calcularProximaSalidaUTC(tiempoInicioUTC, v, aeroOrigen);
+                LocalDateTime salidaUTC = TimeCalculator.calcularProximaSalidaUTC(tiempoInicioUTC, v, aeroOrigen, 0);
                 if (salidaUTC == null) continue;
                 long espera = Duration.between(tiempoInicioUTC, salidaUTC).toMinutes();
                 if (espera < 0 || espera > MAX_ESPERA_MINUTOS) continue;
@@ -529,11 +584,12 @@ public class TabuSearchService {
                 Aeropuerto aeroDest = mapaAeros.get(c.getDestino());
                 if (aeroDest == null) continue;
                 long dur = TimeCalculator.calcularDuracionVueloMinutos(c, aeroAp, aeroDest);
-                long pen = vuelosSaturados.contains(c.getOrigen() + "-" + c.getDestino() + "-" + c.getHoraSalida()) ? 540L : 0L;
+                long penSaturado = vuelosSaturados.contains(c.getOrigen() + "-" + c.getDestino() + "-" + c.getHoraSalida()) ? 540L : 0L;
                 List<Vuelo> nr = new ArrayList<>(estado.ruta());
                 nr.add(c);
+                long penTramo = estado.ruta().size() * PENALIZACION_TRAMO;
                 cola.add(new EstadoBFS(nr, salidaUTC.plusMinutes(dur),
-                        estado.minutosTotal() + espera + dur + pen));
+                        estado.minutosTotal() + espera + dur + penSaturado + penTramo));
             }
         }
         return new ArrayList<>();
@@ -547,31 +603,50 @@ public class TabuSearchService {
     private void registrarImpactoAeropuertos(Solucion solucion, Pedido pedido,
                                              List<Vuelo> ruta, int factor, Map<String, Aeropuerto> mapaAeros) {
         if (ruta == null || ruta.isEmpty()) return;
-        LocalDateTime t = pedido.getFechaRegistro();
         int cantidad = pedido.getCantidadMaletas() * factor;
 
-        String keyOrigen = ruta.get(0).getOrigen() + "_" + t.toLocalDate() + "_" + t.getHour();
+        Aeropuerto aeroOrigen = mapaAeros.get(pedido.getOrigen());
+        if (aeroOrigen == null) return;
+
+        // Tracking en UTC para calcular fechas reales al cruzar husos y medianoche
+        LocalDateTime tiempoInicioUTC = pedido.getFechaRegistro().minusHours(aeroOrigen.getGmt());
+        LocalDateTime corrienteUTC = TimeCalculator.calcularProximaSalidaUTC(tiempoInicioUTC, ruta.get(0), aeroOrigen);
+        if (corrienteUTC == null) corrienteUTC = tiempoInicioUTC;
+
+        LocalDateTime salidaLocalOrigen = corrienteUTC.plusHours(aeroOrigen.getGmt());
+        String keyOrigen = ruta.get(0).getOrigen() + "_" + salidaLocalOrigen.toLocalDate() + "_" + salidaLocalOrigen.getHour();
         solucion.getOcupacionAeropuertos().merge(keyOrigen, cantidad, (a, b) -> Math.max(0, a + b));
 
         List<String> fechas = new ArrayList<>();
         for (int i = 0; i < ruta.size(); i++) {
             Vuelo v = ruta.get(i);
+            Aeropuerto orig = mapaAeros.get(v.getOrigen());
+            Aeropuerto dest = mapaAeros.get(v.getDestino());
+            if (orig == null || dest == null) continue;
+
+            java.time.LocalDate salidaLocalDate = corrienteUTC.plusHours(orig.getGmt()).toLocalDate();
+            if (factor > 0) fechas.add(salidaLocalDate.toString());
+
             String idVueloUnico = v.getOrigen() + "-" + v.getDestino() + "-"
                     + v.getHoraSalida().format(java.time.format.DateTimeFormatter.ofPattern("HH:mm:ss"))
-                    + "_" + t.toLocalDate();
+                    + "_" + salidaLocalDate;
             solucion.getOcupacionVuelos().merge(idVueloUnico, cantidad, (a, b) -> Math.max(0, a + b));
 
-            if (factor > 0) fechas.add(t.toLocalDate().toString());
+            long duracion = TimeCalculator.calcularDuracionVueloMinutos(v, orig, dest);
+            corrienteUTC = corrienteUTC.plusMinutes(duracion);
 
-            Aeropuerto orig = mapaAeros.get(v.getOrigen()), dest = mapaAeros.get(v.getDestino());
-            if (orig != null && dest != null)
-                t = t.plusMinutes(TimeCalculator.calcularDuracionVueloMinutos(v, orig, dest));
-
-            String keyDest = v.getDestino() + "_" + t.toLocalDate() + "_" + t.getHour();
+            LocalDateTime llegadaLocal = corrienteUTC.plusHours(dest.getGmt());
+            String keyDest = v.getDestino() + "_" + llegadaLocal.toLocalDate() + "_" + llegadaLocal.getHour();
             solucion.getOcupacionAeropuertos().merge(keyDest, cantidad, (a, b) -> Math.max(0, a + b));
 
-            if (i < ruta.size() - 1)
-                t = t.plusMinutes(TimeCalculator.calcularTiempoEsperaMinutos(v, ruta.get(i + 1)));
+            if (i < ruta.size() - 1) {
+                Vuelo vSig = ruta.get(i + 1);
+                Aeropuerto aeroSig = mapaAeros.get(vSig.getOrigen());
+                if (aeroSig != null) {
+                    LocalDateTime proxSalida = TimeCalculator.calcularProximaSalidaUTC(corrienteUTC, vSig, aeroSig);
+                    if (proxSalida != null) corrienteUTC = proxSalida;
+                }
+            }
         }
         if (factor > 0 && !fechas.isEmpty())
             solucion.getFechasTramos().put(pedido.getIdPedido(), fechas);
@@ -582,36 +657,46 @@ public class TabuSearchService {
         if (ruta == null || ruta.isEmpty()) return 999999.0;
         if (!ruta.get(ruta.size() - 1).getDestino().equals(pedido.getDestino())) return 999999.0;
 
-        long tiempo = 0;
         Aeropuerto origenPedido = mapaAeros.get(pedido.getOrigen());
-        if (origenPedido != null) {
-            LocalDateTime tiempoInicioUTC = pedido.getFechaRegistro().minusHours(origenPedido.getGmt());
-            LocalDateTime salidaUTC = TimeCalculator.calcularProximaSalidaUTC(tiempoInicioUTC, ruta.get(0), origenPedido);
-            if (salidaUTC != null) {
-                long espInicial = Duration.between(tiempoInicioUTC, salidaUTC).toMinutes();
-                if (espInicial < 0) espInicial += 1440;
-                tiempo += espInicial;
-            }
-        }
+        Aeropuerto destinoPedido = mapaAeros.get(pedido.getDestino());
+        if (origenPedido == null || destinoPedido == null) return 999999.0;
+
+        LocalDateTime tiempoInicioUTC = pedido.getFechaRegistro().minusHours(origenPedido.getGmt());
+        LocalDateTime salidaUTC = TimeCalculator.calcularProximaSalidaUTC(tiempoInicioUTC, ruta.get(0), origenPedido, 0);
+        if (salidaUTC == null) return 999999.0;
+
+        long tiempo = 0;
+        long espInicial = Duration.between(tiempoInicioUTC, salidaUTC).toMinutes();
+        if (espInicial < 0) espInicial = 0;
+        tiempo += espInicial;
+        LocalDateTime corrienteUTC = salidaUTC;
+
         for (int i = 0; i < ruta.size(); i++) {
             Vuelo va = ruta.get(i);
+            Aeropuerto oa = mapaAeros.get(va.getOrigen());
+            Aeropuerto da = mapaAeros.get(va.getDestino());
+            if (oa == null || da == null) return 999999.0;
 
-            long dur = TimeCalculator.calcularDuracionVueloMinutos(va, mapaAeros.get(va.getOrigen()), mapaAeros.get(va.getDestino()));
+            long dur = TimeCalculator.calcularDuracionVueloMinutos(va, oa, da);
             if (dur < 0) dur += 1440;
             tiempo += dur;
+            corrienteUTC = corrienteUTC.plusMinutes(dur);
 
             if (i < ruta.size() - 1) {
-                if (!TimeCalculator.esConexionFisicamentePosible(va, ruta.get(i + 1))) return 999999.0;
+                Vuelo vs = ruta.get(i + 1);
+                Aeropuerto aeroVs = mapaAeros.get(vs.getOrigen());
+                if (aeroVs == null) return 999999.0;
 
-                // CORRECCIÓN LOGÍSTICA CRÍTICA:
-                long esp = TimeCalculator.calcularTiempoEsperaMinutos(va, ruta.get(i + 1));
-                if (esp < 0) esp += 1440; // Evita que las escalas resten minutos falsos
+                LocalDateTime proxSalida = TimeCalculator.calcularProximaSalidaUTC(corrienteUTC, vs, aeroVs);
+                if (proxSalida == null) return 999999.0;
+                long esp = Duration.between(corrienteUTC, proxSalida).toMinutes();
+                if (esp < TimeCalculator.TIEMPO_MINIMO_ESCALA || esp > MAX_ESPERA_MINUTOS) return 999999.0;
                 tiempo += esp;
+                corrienteUTC = proxSalida;
             }
         }
         tiempo += TimeCalculator.TIEMPO_RECOJO_FINAL;
-        boolean mismoCont = mapaAeros.get(pedido.getOrigen()).getContinente()
-                .equals(mapaAeros.get(pedido.getDestino()).getContinente());
+        boolean mismoCont = origenPedido.getContinente().equals(destinoPedido.getContinente());
         return tiempo + TimeCalculator.calcularPenalizacionTiempo(tiempo, mismoCont);
     }
 

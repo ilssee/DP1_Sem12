@@ -59,8 +59,13 @@ public class TimeCalculator {
     }
 
     public static LocalDateTime calcularProximaSalidaUTC(LocalDateTime referenciaUTC, Vuelo vuelo, Aeropuerto aeroPartida) {
+        return calcularProximaSalidaUTC(referenciaUTC, vuelo, aeroPartida, TIEMPO_MINIMO_ESCALA);
+    }
+
+    // Para el primer tramo desde el origen usa tiempoMinimoMinutos=0 (sin espera mínima)
+    public static LocalDateTime calcularProximaSalidaUTC(LocalDateTime referenciaUTC, Vuelo vuelo, Aeropuerto aeroPartida, int tiempoMinimoMinutos) {
         LocalDateTime referenciaLocal = referenciaUTC.plusHours(aeroPartida.getGmt());
-        LocalDateTime minSalidaLocal  = referenciaLocal.plusMinutes(TIEMPO_MINIMO_ESCALA);
+        LocalDateTime minSalidaLocal  = referenciaLocal.plusMinutes(tiempoMinimoMinutos);
         LocalDateTime salidaLocal     = LocalDateTime.of(minSalidaLocal.toLocalDate(), vuelo.getHoraSalida());
         if (salidaLocal.isBefore(minSalidaLocal)) salidaLocal = salidaLocal.plusDays(1);
         return salidaLocal.minusHours(aeroPartida.getGmt());

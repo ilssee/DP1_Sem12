@@ -138,8 +138,10 @@ public class OperacionesDiariasController {
 
         List<Pedido> pedidosManualesTotales = jdbc.query(
                 "SELECT p.id_pedido, p.origen, p.destino, p.fecha_registro, p.cantidad_maletas, p.id_cliente " +
-                        "FROM pedidos p WHERE p.id_pedido LIKE 'MANUAL-%' ORDER BY p.fecha_registro",
-                PEDIDO_MAPPER);
+                        "FROM pedidos p WHERE p.id_pedido LIKE 'MANUAL-%' " +
+                        "AND p.fecha_registro >= ? ORDER BY p.fecha_registro",
+                PEDIDO_MAPPER,
+                horaActualVirtual.minusHours(24));
 
         Solucion solucionParcial = tabuSearchService.ejecutarOptimizacionConEstado(estadoAcumulado, pedidosManualesTotales, vuelos, aeropuertos, 20);
 
@@ -157,6 +159,7 @@ public class OperacionesDiariasController {
             estadoAcumulado.getHorasLlegada().putAll(solucionParcial.getHorasLlegada());
 
         Map<String, List<Vuelo>> rutasEnVivo = new HashMap<>();
+        Map<String, List<Vuelo>> rutasPlanificadas = new HashMap<>();
         Map<String, Integer> ocupacionEnVivo = new HashMap<>();
         Map<String, Integer> capacidadesEnVivo = new HashMap<>();
         Map<String, String> horasLlegadaEnVivo = new HashMap<>();
@@ -244,6 +247,7 @@ public class OperacionesDiariasController {
                 }
             }
 
+            rutasPlanificadas.put(pedidoId, rutaParaFrontend);
             if (hayTramoActivo) {
                 rutasEnVivo.put(pedidoId, rutaParaFrontend);
             }
@@ -255,9 +259,10 @@ public class OperacionesDiariasController {
         respuesta.setCapacidadesVuelos(capacidadesEnVivo);
         respuesta.setHorasLlegada(horasLlegadaEnVivo);
 
+        respuesta.setRutasPlanificadas(rutasPlanificadas);
         respuesta.setOcupacionAeropuertos(new HashMap<>(estadoAcumulado.getOcupacionAeropuertos()));
         respuesta.setDetallesEnvios(new HashMap<>(estadoAcumulado.getDetallesEnvios()));
-        whitespace: respuesta.setFechasTramos(new HashMap<>(estadoAcumulado.getFechasTramos()));
+        respuesta.setFechasTramos(new HashMap<>(estadoAcumulado.getFechasTramos()));
         respuesta.setCapacidadesAeropuertos(estadoAcumulado.getCapacidadesAeropuertos());
 
         return respuesta;
