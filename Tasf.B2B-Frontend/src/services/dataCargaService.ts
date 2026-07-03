@@ -1,6 +1,6 @@
 import axios from 'axios';
 
-const API_BASE_URL = 'http://localhost:8080/api/datos';
+const API_BASE_URL = '/api/datos';
 
 interface RespuestaCarga {
   mensaje: string;
