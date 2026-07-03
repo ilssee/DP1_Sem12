@@ -1450,6 +1450,12 @@ function App() {
   const [vuelosFiltrados, setVuelosFiltrados] = useState<string[] | null>(null);
   const [modoOscuro, setModoOscuro] = useState(true);
   const [mostrarReporte, setMostrarReporte] = useState(false);
+  const [reporteGuardado, setReporteGuardado] = useState<{ resultado: Solucion; fechaInicio: string; dias: number } | null>(() => {
+    try {
+      const raw = localStorage.getItem('tasfb2b_ultimo_reporte');
+      return raw ? JSON.parse(raw) : null;
+    } catch { return null; }
+  });
   const inicioRealRef = useRef<number | null>(null);
 
   // Ocupación en tiempo real por aeropuerto — compartido entre MapArea y DrawerAlmacenes
@@ -1554,6 +1560,17 @@ function App() {
           clearInterval(intervalo);
           setSimulandoEnVivo(false);
           localStorage.removeItem("jobIdActivo");
+
+          if (estadoJob.estado === "COMPLETADO") {
+            setResultado(prev => {
+              if (prev) {
+                const entrada = { resultado: prev, fechaInicio: fechaInicioRef.current, dias: diasRef.current };
+                try { localStorage.setItem('tasfb2b_ultimo_reporte', JSON.stringify(entrada)); } catch {}
+                setReporteGuardado(entrada);
+              }
+              return prev;
+            });
+          }
 
           if (estadoJob.estado === "ERROR") {
             alert("Error en la simulación: " + estadoJob.mensaje);
@@ -1811,6 +1828,15 @@ function App() {
           >
             <FileText size={18} /> Carga de Datos
           </button>
+          {reporteGuardado && (
+            <button
+              onClick={() => setMostrarReporte(true)}
+              className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-colors text-slate-400 hover:bg-slate-800 hover:text-white"
+              title="Ver último reporte guardado"
+            >
+              <FileText size={18} /> Último reporte
+            </button>
+          )}
           <button
             onClick={() => setModoOscuro(!modoOscuro)}
             className="ml-2 px-3 py-2 rounded-lg text-sm transition-colors text-slate-400 hover:bg-slate-800 hover:text-white"
@@ -1913,10 +1939,16 @@ function App() {
                       <Loader2 className="animate-spin" size={20} />{" "}
                       CALCULANDO...
                     </>
+                  ) : simulandoEnVivo ? (
+                    <>
+                      <Loader2 className="animate-spin" size={20} />{" "}
+                      SIMULANDO...
+                    </>
                   ) : (
                     "INICIAR SIMULACIÓN"
                   )}
                 </button>
+
 
               </div>
             </div>
@@ -1924,8 +1956,8 @@ function App() {
 
           <main className="flex-1 flex flex-col relative z-10 overflow-hidden">
             {/* Barra superior de paneles */}
-            {resultado && (
-              <div className="bg-slate-900 border-b border-slate-700 px-3 py-1.5 flex gap-2 shrink-0 z-[1000]">
+            {(resultado || (porcentajeSimulacion > 0 && porcentajeSimulacion <= 100)) && (
+              <div className="bg-slate-900 border-b border-slate-700 px-3 py-1.5 flex gap-2 items-center shrink-0 z-[1000]">
                 <button
                   onClick={() => { setPanelAlmacenesAbierto(v => !v); setPanelEnviosAbierto(false); setPanelVuelosAbierto(false); }}
                   className={`text-xs font-bold px-3 py-1.5 rounded-lg border flex items-center gap-2 transition-colors ${panelAlmacenesAbierto ? 'bg-slate-700 border-slate-500 text-white' : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-600'}`}
@@ -1944,6 +1976,23 @@ function App() {
                 >
                   ✈ Vuelos activos {panelVuelosAbierto ? '▶' : '◀'}
                 </button>
+
+                {(simulandoEnVivo || (!simulandoEnVivo && porcentajeSimulacion > 0 && porcentajeSimulacion <= 100)) && (() => {
+                  const pct = Math.min(100, Math.round(porcentajeSimulacion));
+                  const completado = pct >= 100;
+                  return (
+                    <div className="ml-auto flex items-center gap-2 min-w-[160px]">
+                      <span className="text-[10px] text-slate-400 uppercase tracking-widest flex items-center gap-1">
+                        <span className={`w-1.5 h-1.5 rounded-full ${completado ? 'bg-tasf-green' : 'bg-tasf-green animate-pulse'}`} />
+                        Progreso
+                      </span>
+                      <div className="flex-1 bg-slate-700 rounded-full h-2 overflow-hidden">
+                        <div className="h-2 rounded-full bg-tasf-green transition-all duration-700 ease-out" style={{ width: `${pct}%` }} />
+                      </div>
+                      <span className={`text-xs font-bold font-mono w-9 text-right ${completado ? 'text-tasf-green' : 'text-white'}`}>{pct}%</span>
+                    </div>
+                  );
+                })()}
               </div>
             )}
             <div className="flex-1 bg-slate-200 relative">
@@ -1961,6 +2010,7 @@ function App() {
                 onVueloClick={(key) => { setVueloResaltado(key); setPanelVuelosAbierto(true); setPanelEnviosAbierto(false); setPanelAlmacenesAbierto(false); }}
                 aeropuertosFiltrados={panelAlmacenesAbierto ? aeropuertosFiltrados : null}
                 vuelosFiltrados={panelVuelosAbierto ? vuelosFiltrados : null} />
+
 
               {/* Overlay procesando primer bloque */}
               {procesandoPrimerBloque && (
@@ -2220,11 +2270,11 @@ function App() {
       </div>
 
       {/* Reporte periodo */}
-      {mostrarReporte && resultado && (
+      {mostrarReporte && (resultado || reporteGuardado) && (
         <ReportePeriodo
-          resultado={resultado}
-          fechaInicio={fechaInicio}
-          dias={dias}
+          resultado={resultado ?? reporteGuardado!.resultado}
+          fechaInicio={resultado ? fechaInicio : reporteGuardado!.fechaInicio}
+          dias={resultado ? dias : reporteGuardado!.dias}
           onCerrar={() => setMostrarReporte(false)}
         />
       )}
