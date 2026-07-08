@@ -19,11 +19,12 @@ import {
   cargarVuelos,
   cargarEnvios,
 } from "./services/dataCargaService";
-import type { Solucion } from "./types";
+import type { Solucion, Vuelo } from "./types";
 import SimulacionDiariaPage from "./pages/SimulacionDiariaPage";
 import RegistroPedidoPage from "./pages/RegistroPedidoPage";
+import SimulacionColapsoPage from "./pages/SimulacionColapsoPage";
 
-type Vista = "dia-a-dia" | "mapa" | "cargar" | "registro-pedido";
+type Vista = "dia-a-dia" | "mapa" | "cargar" | "registro-pedido" | "colapso";
 
 interface EstadoCarga {
   cargando: boolean;
@@ -36,7 +37,6 @@ const estadoInicial: EstadoCarga = {
   mensaje: "",
   error: false,
 };
-
 
 const formatearDuracion = (ms: number): string => {
   const totalSegundos = Math.max(0, Math.floor(ms / 1000));
@@ -1461,7 +1461,8 @@ function App() {
   // Ocupación en tiempo real por aeropuerto — compartido entre MapArea y DrawerAlmacenes
   const ocupacionAeropuertosRT = useMemo(() => {
     const result: Record<string, number> = {};
-    if (!resultado?.detallesEnvios || !resultado?.rutasAsignadas || !fechaInicio) return result;
+    const fechaBase = fechaInicio;
+    if (!resultado?.detallesEnvios || !resultado?.rutasAsignadas || !fechaBase) return result;
     const fechasTramos = (resultado as any).fechasTramos ?? {};
     const normH = (t: string) => { const p=(t??"").split(":"); return `${p[0].padStart(2,"0")}:${(p[1]??"00").padStart(2,"0")}:${(p[2]??"00").padStart(2,"0")}`; };
     Object.entries(resultado.detallesEnvios).forEach(([id, detalle]: [string, any]) => {
@@ -1470,7 +1471,7 @@ function App() {
       tramos.forEach((v: any, i: number) => {
         const fechaSalida = fechas[i];
         if (!fechaSalida) return;
-        const estado = clasificarVuelo(fechaSalida, normH(v.horaSalida??''), normH(v.horaLlegada??''), fechaInicio, minutosVirtualesTotales);
+        const estado = clasificarVuelo(fechaSalida, normH(v.horaSalida??''), normH(v.horaLlegada??''), fechaBase, minutosVirtualesTotales);
         const esUltimo = i === tramos.length - 1;
 
         // Tránsito: en espera y tramo anterior ya completó → maletas en v.origen
@@ -1478,7 +1479,7 @@ function App() {
           const tramoAnteriorOk = i === 0 || (() => {
             const fa = fechas[i - 1];
             if (!fa) return false;
-            return clasificarVuelo(fa, normH(tramos[i-1].horaSalida??''), normH(tramos[i-1].horaLlegada??''), fechaInicio, minutosVirtualesTotales) === 'completado';
+            return clasificarVuelo(fa, normH(tramos[i-1].horaSalida??''), normH(tramos[i-1].horaLlegada??''), fechaBase, minutosVirtualesTotales) === 'completado';
           })();
           if (tramoAnteriorOk) {
             result[v.origen] = (result[v.origen] ?? 0) + detalle.cantidadMaletas;
@@ -1496,7 +1497,7 @@ function App() {
       });
     });
     return result;
-  }, [resultado, Math.floor(minutosVirtualesTotales), fechaInicio]);
+  }, [resultado, minutosVirtualesTotales, fechaInicio]);
 
   const [archivoAero, setArchivoAero] = useState<File | null>(null);
   const [archivoVuelos, setArchivoVuelos] = useState<File | null>(null);
@@ -1817,11 +1818,12 @@ function App() {
           >
             <Calendar size={18} /> Simulación por periodo
           </button>
-          <div
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-colors ${vistaActiva === "mapa" ? "bg-tasf-green text-white" : "text-slate-400 hover:bg-slate-800 hover:text-white"}`}
+          <button
+            onClick={() => setVistaActiva("colapso")}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-colors ${vistaActiva === "colapso" ? "bg-tasf-green text-white" : "text-slate-400 hover:bg-slate-800 hover:text-white"}`}
           >
             <OctagonAlert size={18}/> Simulación hasta colapso
-          </div>
+          </button>
           <button
             onClick={() => setVistaActiva("cargar")}
             className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-colors ${vistaActiva === "cargar" ? "bg-tasf-green text-white" : "text-slate-400 hover:bg-slate-800 hover:text-white"}`}
@@ -2089,6 +2091,11 @@ function App() {
             )}
 
           </main>
+        </div>
+
+        {/* VISTA 3: Simulación hasta colapso */}
+        <div className={`w-full h-full ${vistaActiva === "colapso" ? "block" : "hidden"}`}>
+          <SimulacionColapsoPage modoOscuro={modoOscuro} />
         </div>
 
         {/* VISTA 3: Cargar Datos */}

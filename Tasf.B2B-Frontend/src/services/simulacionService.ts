@@ -74,6 +74,17 @@ export const registrarPedidoManual = async (
   }
 };
 
+export const limpiarEstadoDiario = async (fecha: string): Promise<void> => {
+  try {
+    await axios.delete(`${API_BASE_URL}/diario/limpiar`, {
+      params: { fecha },
+    });
+  } catch (error) {
+    console.error("Error al limpiar el estado diario:", error);
+    throw error;
+  }
+};
+
 export const simularVentanaDiaria = async (
   fechaInicioSimulacion: string,
   fechaHoraActual: string,

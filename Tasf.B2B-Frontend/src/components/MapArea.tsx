@@ -26,6 +26,27 @@ function EventosMapa({ alHacerClic }: { alHacerClic: () => void }) {
   return null;
 }
 
+function RedibujarMapa() {
+  const map = useMap();
+
+  useEffect(() => {
+    const refrescar = () => {
+      window.requestAnimationFrame(() => map.invalidateSize());
+    };
+
+    refrescar();
+    const timer = window.setTimeout(refrescar, 180);
+    window.addEventListener('resize', refrescar);
+
+    return () => {
+      window.clearTimeout(timer);
+      window.removeEventListener('resize', refrescar);
+    };
+  }, [map]);
+
+  return null;
+}
+
 function VolarAAeropuerto({ codigo }: { codigo: string | null | undefined }) {
   const map = useMap();
   const prev = useRef<string | null>(null);
@@ -303,7 +324,7 @@ export default function MapArea({ solucion, progreso, modoOscuro = true, horaVir
     });
 
     return { avionesEnPantalla, posicionResaltado };
-  }, [rutasVisuales, Math.floor(minutosVirtualesTotales), vueloSeleccionado, mostrarVacíos, vuelosFiltrados]);
+  }, [rutasVisuales, minutosVirtualesTotales ?? 0, vueloSeleccionado, mostrarVacíos, vuelosFiltrados]);
 
   // Línea de ruta para el vuelo seleccionado
   const lineaRuta = useMemo(() => {
@@ -396,6 +417,7 @@ export default function MapArea({ solucion, progreso, modoOscuro = true, horaVir
       worldCopyJump={false}
       style={{ height: '100%', width: '100%', zIndex: 10 }}
     >
+      <RedibujarMapa />
       <TileLayer
         url={modoOscuro
           ? "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
