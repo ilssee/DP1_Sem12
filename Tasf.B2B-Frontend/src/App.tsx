@@ -1632,7 +1632,7 @@ function App() {
   useEffect(() => { diasRef.current = dias; }, [dias]);
 
   useEffect(() => {
-    if (vistaActiva === "mapa" || vistaActiva === "dia-a-dia") {
+    if (vistaActiva === "mapa" || vistaActiva === "dia-a-dia" || vistaActiva === "colapso") {
       const timer = setTimeout(() => {
         window.dispatchEvent(new Event("resize"));
       }, 100);
