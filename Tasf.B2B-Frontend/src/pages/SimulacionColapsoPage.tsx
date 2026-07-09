@@ -170,8 +170,9 @@ export default function SimulacionColapsoPage({ modoOscuro = true }: { modoOscur
             completado = true;
             setColapsoDetectado(true);
             setMotivoColapso(deteccion.motivo);
-            setMomentoColapso(`${formatearFecha(new Date(`${fechaInicio}T${horaInicio}:00`))} ${formatearHora(new Date(`${fechaInicio}T${horaInicio}:00`))}`);
-            setMensaje(`Colapso detectado en ${formatearFecha(new Date(`${fechaInicio}T${horaInicio}:00`))} ${formatearHora(new Date(`${fechaInicio}T${horaInicio}:00`))}`);
+            const fechaColapsoReal = new Date(fechaInicioSimDate.getTime() + minutosSimulados * 60 * 1000);
+            setMomentoColapso(`${formatearFecha(fechaColapsoReal)} ${formatearHora(fechaColapsoReal)}`);
+            setMensaje(`Colapso detectado en ${formatearFecha(fechaColapsoReal)} ${formatearHora(fechaColapsoReal)}`);
             finalizar();
             return;
           }
