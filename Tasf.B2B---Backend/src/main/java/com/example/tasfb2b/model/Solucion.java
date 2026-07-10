@@ -4,8 +4,10 @@ import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 @Data
 public class Solucion {
@@ -39,12 +41,16 @@ public class Solucion {
 
     private double fitness;
 
+    // IDs de pedidos que fueron re-planificados por cancelación de vuelo
+    private Set<String> pedidosReplanificados = new HashSet<>();
+
     public Solucion() {
         this.rutasAsignadas = new HashMap<>();
         this.ocupacionVuelos = new HashMap<>();
         this.ocupacionAeropuertos = new HashMap<>();
         this.capacidadesVuelos = new HashMap<>();
         this.capacidadesAeropuertos = new HashMap<>();
+        this.pedidosReplanificados = new HashSet<>();
         this.fitness = Double.MAX_VALUE;
     }
 
@@ -55,6 +61,7 @@ public class Solucion {
         copia.setOcupacionVuelos(new HashMap<>(this.ocupacionVuelos));
         copia.setOcupacionAeropuertos(new HashMap<>(this.ocupacionAeropuertos));
         copia.setFechasTramos(new HashMap<>(this.fechasTramos));
+        copia.setPedidosReplanificados(new HashSet<>(this.pedidosReplanificados));
         return copia;
     }
 }

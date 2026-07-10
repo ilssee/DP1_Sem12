@@ -9,6 +9,7 @@ import org.springframework.scheduling.annotation.Scheduled;
 
 import java.time.LocalDateTime;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -52,6 +53,37 @@ public class SimulacionController {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "El Job ID no existe.");
         }
         return job;
+    }
+
+    // 3. ENDPOINT PARA CANCELAR UN VUELO EN TIEMPO REAL
+    @PostMapping("/simulacion/{jobId}/cancelar-vuelo")
+    public Map<String, Object> cancelarVuelo(
+            @PathVariable String jobId,
+            @RequestParam String claveVuelo
+    ) {
+        JobEstado job = jobsActivos.get(jobId);
+        if (job == null) throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Job no encontrado");
+        job.cancelarVuelo(claveVuelo);
+        System.out.println("✈ Vuelo cancelado en job " + jobId + ": " + claveVuelo);
+        return Map.of("cancelado", claveVuelo, "totalCancelados", job.getVuelosCancelados().size());
+    }
+
+    // 4. ENDPOINT PARA DETENER LA SIMULACIÓN (usado por colapso)
+    @PostMapping("/simulacion/{jobId}/detener")
+    public Map<String, Object> detenerSimulacion(@PathVariable String jobId) {
+        JobEstado job = jobsActivos.get(jobId);
+        if (job == null) throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Job no encontrado");
+        job.detener();
+        System.out.println("🛑 Simulación detenida por colapso: " + jobId);
+        return Map.of("detenido", true);
+    }
+
+    // 5. ENDPOINT PARA VER VUELOS CANCELADOS DE UN JOB
+    @GetMapping("/simulacion/{jobId}/vuelos-cancelados")
+    public Set<String> vuelosCancelados(@PathVariable String jobId) {
+        JobEstado job = jobsActivos.get(jobId);
+        if (job == null) throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Job no encontrado");
+        return job.getVuelosCancelados();
     }
 
     // LIMPIEZA AUTOMÁTICA DE MEMORIA ---

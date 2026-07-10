@@ -57,6 +57,18 @@ export const obtenerEstadoSimulacion = async (
   }
 };
 
+// 3. DETENER UNA SIMULACIÓN (usado por colapso)
+export const detenerSimulacion = async (jobId: string): Promise<void> => {
+  await axios.post(`${API_BASE_URL}/simulacion/${jobId}/detener`);
+};
+
+// 4. CANCELAR UN VUELO EN TIEMPO REAL
+export const cancelarVuelo = async (jobId: string, claveVuelo: string): Promise<void> => {
+  await axios.post(`${API_BASE_URL}/simulacion/${jobId}/cancelar-vuelo`, null, {
+    params: { claveVuelo },
+  });
+};
+
 // ── MÉTODOS DEL DÍA A DÍA ──
 
 export const registrarPedidoManual = async (

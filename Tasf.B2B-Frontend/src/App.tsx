@@ -13,6 +13,8 @@ import { aeropuertosDB, aeropuertoContinente } from "./data/coordenadas";
 import {
   iniciarSimulacionPeriodo,
   obtenerEstadoSimulacion,
+  cancelarVuelo,
+  detenerSimulacion,
 } from "./services/simulacionService";
 import {
   cargarAeropuertos,
@@ -22,7 +24,6 @@ import {
 import type { Solucion, Vuelo } from "./types";
 import SimulacionDiariaPage from "./pages/SimulacionDiariaPage";
 import RegistroPedidoPage from "./pages/RegistroPedidoPage";
-import SimulacionColapsoPage from "./pages/SimulacionColapsoPage";
 
 type Vista = "dia-a-dia" | "mapa" | "cargar" | "registro-pedido" | "colapso";
 
@@ -205,11 +206,13 @@ function AeroSelect({ value, onChange, opciones, placeholder }: {
   );
 }
 
-function DrawerVuelos({ resultado, minutosVirtualesTotales, fechaInicio, onSeleccionar, onCerrar, vueloExpandir, onFiltrados }: {
+function DrawerVuelos({ resultado, minutosVirtualesTotales, fechaInicio, onSeleccionar, onCerrar, vueloExpandir, onFiltrados, vuelosCancelados, onCancelarVuelo }: {
   resultado: any; minutosVirtualesTotales: number; fechaInicio: string;
   onSeleccionar: (key: string) => void; onCerrar: () => void;
   vueloExpandir?: string | null;
   onFiltrados?: (keys: string[] | null) => void;
+  vuelosCancelados?: Set<string>;
+  onCancelarVuelo?: (claveVuelo: string) => void;
 }) {
   const [orden, setOrden] = useState<{ col: 'cant'|'cap'|'pct'|'envios'|'minSalida'|'minLlegada'|'origen'|'destino'; dir: 1|-1 }>({ col: 'minSalida', dir: 1 });
   const [filtrosAbiertos, setFiltrosAbiertos] = useState(false);
@@ -255,8 +258,15 @@ function DrawerVuelos({ resultado, minutosVirtualesTotales, fechaInicio, onSelec
         const origen = partes[0], destino = partes[1], horaSalida = normH(partes.slice(2).join(":"));
         // Buscar horaLlegada desde el mapa dedicado (clave sin fecha)
         const claveRuta = `${origen}-${destino}-${horaSalida}`;
-        const horaLlegada = normH(horasLlegadaMap[claveRuta] ?? horasLlegadaMap[sinFecha] ?? "");
-        if (!horaLlegada || horaLlegada === "00:00") return null; // vuelo sin datos de llegada
+        let horaLlegada = normH(horasLlegadaMap[claveRuta] ?? horasLlegadaMap[sinFecha] ?? "");
+        // Fallback: buscar horaLlegada directamente en las rutas asignadas
+        if (!horaLlegada || horaLlegada === "00:00:00") {
+          for (const ruta of Object.values(resultado.rutasAsignadas ?? {}) as any[][]) {
+            const v = ruta.find((r: any) => r.origen === origen && r.destino === destino && normH(r.horaSalida ?? "") === horaSalida);
+            if (v?.horaLlegada) { horaLlegada = normH(v.horaLlegada); break; }
+          }
+        }
+        if (!horaLlegada || horaLlegada === "00:00:00") return null; // vuelo sin datos de llegada
         const [fy, fm, fd] = fechaInicio.split("-").map(Number);
         const [vy, vm, vd] = fecha.split("-").map(Number);
         const dias = Math.floor((new Date(vy,vm-1,vd).getTime() - new Date(fy,fm-1,fd).getTime()) / 86400000);
@@ -377,7 +387,7 @@ function DrawerVuelos({ resultado, minutosVirtualesTotales, fechaInicio, onSelec
         <p className="text-[9px] text-slate-500 italic">👆 Haz clic en una fila para ver los envíos consolidados</p>
       </div>
       <div className="overflow-auto flex-1">
-        <table className="w-full text-[11px] text-white min-w-[600px]">
+        <table className="w-full text-[11px] text-white min-w-[780px]">
           <thead className="sticky top-0 bg-slate-800 text-[9px] uppercase tracking-wider z-10">
             <tr>
               <th className="px-2 py-2 text-left text-slate-400 w-6"></th>
@@ -389,6 +399,7 @@ function DrawerVuelos({ resultado, minutosVirtualesTotales, fechaInicio, onSelec
               <th className={thClass('pct')} onClick={() => toggleOrden('pct')}>% Ocup{indicator('pct')}</th>
               <th className={thClass('minSalida')} onClick={() => toggleOrden('minSalida')}>Salida{indicator('minSalida')}</th>
               <th className={thClass('minLlegada')} onClick={() => toggleOrden('minLlegada')}>Llegada{indicator('minLlegada')}</th>
+              {onCancelarVuelo && <th className="px-2 py-2 text-left text-slate-400">Acción</th>}
             </tr>
           </thead>
           <tbody>
@@ -420,6 +431,26 @@ function DrawerVuelos({ resultado, minutosVirtualesTotales, fechaInicio, onSelec
                     </td>
                     <td className="px-2 py-2 text-tasf-green font-mono">{v.horaSalida}</td>
                     <td className="px-2 py-2 font-mono text-slate-300">{v.horaLlegada}</td>
+                    {onCancelarVuelo && (() => {
+                      const claveRuta = `${v.origen}-${v.destino}-${v.horaSalida}`;
+                      const cancelado = vuelosCancelados?.has(claveRuta);
+                      return (
+                        <td className="px-2 py-2" onClick={e => e.stopPropagation()}>
+                          {cancelado ? (
+                            <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-red-500/20 text-red-400 border border-red-500/30">
+                              ✕ Cancelado
+                            </span>
+                          ) : (
+                            <button
+                              onClick={() => onCancelarVuelo(claveRuta)}
+                              className="text-[10px] font-bold px-2 py-0.5 rounded bg-slate-700 hover:bg-red-500/20 text-slate-400 hover:text-red-400 border border-slate-600 hover:border-red-500/40 transition-colors"
+                            >
+                              Cancelar
+                            </button>
+                          )}
+                        </td>
+                      );
+                    })()}
                   </tr>
                   {abierto && (
                     <tr className="border-b border-slate-700">
@@ -788,7 +819,7 @@ function DrawerEnvios({ resultado, minutosVirtualesTotales, fechaInicioSim, onCe
   onEnfocarAlmacen?: (codigo: string) => void;
 }) {
   type Col = 'id'|'idCliente'|'vuelo'|'maletas'|'origen'|'destino';
-  type Tab = 'vuelo'|'espera'|'completado';
+  type Tab = 'vuelo'|'espera'|'completado'|'replanificado';
   const [tab, setTab] = useState<Tab>('vuelo');
   const [orden, setOrden] = useState<{ col: Col; dir: 1|-1 }>({ col: 'id', dir: 1 });
   const [filtrosAbiertos, setFiltrosAbiertos] = useState(false);
@@ -813,42 +844,98 @@ function DrawerEnvios({ resultado, minutosVirtualesTotales, fechaInicioSim, onCe
     });
   }, [resultado]);
 
-  // Clasificación en tiempo real — se recalcula cada segundo pero solo para vuelo/completado
-  const grupos = useMemo(() => {
-    const result: Record<Tab, any[]> = { vuelo: [], espera: [], completado: [] };
-    datosBase.forEach(({ tramos, fechas, ...item }) => {
-      let estado: Tab = 'espera';
-      let minLlegadaFinal = 0;
-      let vueloKey: string | null = null;
-      let aeropuerto: string | null = null;
-      if (tramos.length > 0) {
-        let hayVuelo = false, todosCompletos = true;
-        for (let i = 0; i < tramos.length; i++) {
-          const v = tramos[i];
-          const fechaSalida = fechas[i];
-          if (!fechaSalida) { todosCompletos = false; continue; }
-          const e = clasificarVuelo(fechaSalida, normH(v.horaSalida), normH(v.horaLlegada), fechaInicioSim, minutosVirtualesTotales);
-          const mLleg = minLlegadaDesdeInicio(fechaSalida, normH(v.horaSalida??''), normH(v.horaLlegada??''), fechaInicioSim);
-          if (mLleg > minLlegadaFinal) minLlegadaFinal = mLleg;
-          if (e === 'vuelo') {
-            hayVuelo = true; todosCompletos = false;
-            vueloKey = `${v.origen}-${v.destino}-${normH(v.horaSalida??'')}_${fechaSalida}`;
-            aeropuerto = v.origen; // fallback: almacén de origen si el avión no se ve en mapa
-            break;
-          }
-          if (e === 'espera') {
-            todosCompletos = false;
-            if (!aeropuerto) aeropuerto = v.origen;
-            break; // tramos posteriores no aplican hasta que éste complete
-          }
+  // "En vuelo": sacar envíos directamente de los vuelos activos en este momento
+  const enviosEnVuelo = useMemo(() => {
+    const detalles = resultado?.detallesEnvios ?? {};
+    const rutasAsignadas = resultado?.rutasAsignadas ?? {};
+    const horasLlegadaMap = resultado?.horasLlegada ?? {};
+    const vistos = new Set<string>();
+    const lista: any[] = [];
+
+    Object.entries(resultado?.ocupacionVuelos ?? {}).forEach(([key]) => {
+      const idx = key.lastIndexOf('_');
+      if (idx < 0) return;
+      const sinFecha = key.substring(0, idx);
+      const fecha = key.substring(idx + 1);
+      const partes = sinFecha.split('-');
+      if (partes.length < 3) return;
+      const origen = partes[0], destino = partes[1];
+      const horaSalida = normH(partes.slice(2).join(':'));
+      const claveRuta = `${origen}-${destino}-${horaSalida}`;
+
+      let horaLlegada = normH((horasLlegadaMap as any)[claveRuta] ?? '');
+      if (!horaLlegada || horaLlegada === '00:00:00') {
+        for (const ruta of Object.values(rutasAsignadas) as any[][]) {
+          const v = ruta.find((r: any) => r.origen === origen && r.destino === destino && normH(r.horaSalida ?? '') === horaSalida);
+          if (v?.horaLlegada) { horaLlegada = normH(v.horaLlegada); break; }
         }
-        if (!hayVuelo && todosCompletos) aeropuerto = tramos[tramos.length - 1]?.destino ?? null;
-        estado = hayVuelo ? 'vuelo' : todosCompletos ? 'completado' : 'espera';
       }
-      result[estado].push({ ...item, minLlegadaFinal, vueloKey, aeropuerto });
+      if (!horaLlegada || horaLlegada === '00:00:00') return;
+      if (clasificarVuelo(fecha, horaSalida, horaLlegada, fechaInicioSim, minutosVirtualesTotales) !== 'vuelo') return;
+
+      // Recopilar pedidos que tienen este tramo
+      Object.entries(rutasAsignadas).forEach(([id, tramos]: [string, any]) => {
+        if (vistos.has(id)) return;
+        const tieneTramo = (tramos as any[]).some((v: any) =>
+          v.origen === origen && v.destino === destino && normH(v.horaSalida ?? '') === horaSalida
+        );
+        if (!tieneTramo) return;
+        vistos.add(id);
+        const d = (detalles as any)[id];
+        if (!d) return;
+        lista.push({
+          id,
+          idCliente: d.idCliente,
+          maletas: d.cantidadMaletas,
+          origen: d.origen,
+          destino: d.destino,
+          vuelo: claveRuta,
+          vueloKey: key,
+          aeropuerto: origen,
+          minLlegadaFinal: 0,
+        });
+      });
+    });
+    return lista;
+  }, [resultado, minutosVirtualesTotales, fechaInicioSim]);
+
+  const idsReplanificados: Set<string> = useMemo(() =>
+    new Set((resultado?.pedidosReplanificados as string[] | undefined) ?? []),
+  [resultado]);
+
+  // Espera y completados siguen usando clasificación por fecha
+  const grupos = useMemo(() => {
+    const result: Record<Tab, any[]> = { vuelo: enviosEnVuelo, espera: [], completado: [], replanificado: [] };
+    const idsEnVuelo = new Set(enviosEnVuelo.map((e: any) => e.id));
+    datosBase.forEach(({ tramos, fechas, ...item }) => {
+      if (idsEnVuelo.has(item.id)) return; // ya está en vuelo
+      let minLlegadaFinal = 0;
+      let aeropuerto: string | null = null;
+      let todosCompletos = tramos.length > 0;
+      for (let i = 0; i < tramos.length; i++) {
+        const v = tramos[i];
+        const fechaSalida = fechas[i];
+        if (!fechaSalida) { todosCompletos = false; continue; }
+        const e = clasificarVuelo(fechaSalida, normH(v.horaSalida), normH(v.horaLlegada), fechaInicioSim, minutosVirtualesTotales);
+        const mLleg = minLlegadaDesdeInicio(fechaSalida, normH(v.horaSalida??''), normH(v.horaLlegada??''), fechaInicioSim);
+        if (mLleg > minLlegadaFinal) minLlegadaFinal = mLleg;
+        if (e === 'espera') { todosCompletos = false; if (!aeropuerto) aeropuerto = v.origen; break; }
+      }
+      if (!aeropuerto && todosCompletos) aeropuerto = tramos[tramos.length - 1]?.destino ?? null;
+      const estado: Tab = todosCompletos ? 'completado' : 'espera';
+      result[estado].push({ ...item, minLlegadaFinal, vueloKey: null, aeropuerto });
+    });
+    // Tab replanificados: cualquier pedido (de cualquier estado) que fue afectado
+    const todosEnvios = [...result.vuelo, ...result.espera, ...result.completado];
+    const idsYa = new Set<string>();
+    todosEnvios.forEach(e => {
+      if (idsReplanificados.has(e.id) && !idsYa.has(e.id)) {
+        idsYa.add(e.id);
+        result.replanificado.push(e);
+      }
     });
     return result;
-  }, [datosBase, minutosVirtualesTotales, fechaInicioSim]);
+  }, [enviosEnVuelo, datosBase, minutosVirtualesTotales, fechaInicioSim, idsReplanificados]);
 
   const [pagina, setPagina] = useState(0);
   const PAGE_SIZE = 50;
@@ -885,6 +972,7 @@ function DrawerEnvios({ resultado, minutosVirtualesTotales, fechaInicioSim, onCe
     { key: 'vuelo', label: 'En vuelo', color: 'text-tasf-green' },
     { key: 'espera', label: 'En espera', color: 'text-yellow-400' },
     { key: 'completado', label: 'Completados', color: 'text-slate-400' },
+    { key: 'replanificado', label: '↺ Replan.', color: 'text-orange-400' },
   ];
 
   return (
@@ -931,12 +1019,20 @@ function DrawerEnvios({ resultado, minutosVirtualesTotales, fechaInicioSim, onCe
       {/* Tabs */}
       <div className="flex border-b border-slate-700 shrink-0">
         {tabs.map(t => (
-          <button key={t.key} onClick={() => { setTab(t.key); if (t.key !== 'completado') setHorasAplicadas(null); }}
+          <button key={t.key} onClick={() => { setTab(t.key as Tab); if (t.key !== 'completado') setHorasAplicadas(null); }}
             className={`flex-1 py-2 text-[9px] font-bold uppercase tracking-wider transition-colors ${tab === t.key ? `${t.color} border-b-2 border-current` : 'text-slate-500 hover:text-slate-300'}`}>
             {t.label} ({grupos[t.key].length})
           </button>
         ))}
       </div>
+
+      {/* Banner explicativo para tab replanificados */}
+      {tab === 'replanificado' && (
+        <div className="flex items-center gap-2 px-4 py-2 border-b border-orange-800/40 bg-orange-950/20 shrink-0">
+          <span className="text-orange-400 text-[10px]">↺</span>
+          <span className="text-[10px] text-orange-300">Pedidos cuyo vuelo fue cancelado y fueron re-planificados.</span>
+        </div>
+      )}
 
       {/* Panel de filtro por horas (solo Completados) */}
       {tab === 'completado' && (
@@ -980,8 +1076,13 @@ function DrawerEnvios({ resultado, minutosVirtualesTotales, fechaInicioSim, onCe
             {filasFiltradas.length === 0 ? (
               <tr><td colSpan={7} className="text-center text-slate-500 py-8 italic">Sin envíos</td></tr>
             ) : filasFiltradas.map(e => (
-              <tr key={e.id} className="border-b border-slate-800 hover:bg-slate-800 transition-colors">
-                <td className="px-2 py-2 font-mono text-[10px] text-slate-200">{e.id}</td>
+              <tr key={e.id} className={`border-b border-slate-800 hover:bg-slate-800 transition-colors ${idsReplanificados.has(e.id) ? 'bg-orange-950/30' : ''}`}>
+                <td className="px-2 py-2 font-mono text-[10px] text-slate-200">
+                  {e.id}
+                  {idsReplanificados.has(e.id) && (
+                    <span className="ml-1 text-orange-400 font-bold text-[9px] bg-orange-400/10 px-1 py-0.5 rounded">↺</span>
+                  )}
+                </td>
                 <td className="px-2 py-2 font-mono text-[10px] text-slate-300">{e.idCliente}</td>
                 <td className="px-2 py-2 font-mono text-[10px] text-slate-300 max-w-[160px] truncate" title={e.vuelo}>{e.vuelo}</td>
                 <td className="px-2 py-2 text-center">
@@ -1450,6 +1551,8 @@ function App() {
   const [vuelosFiltrados, setVuelosFiltrados] = useState<string[] | null>(null);
   const [modoOscuro, setModoOscuro] = useState(true);
   const [mostrarReporte, setMostrarReporte] = useState(false);
+  const [vuelosCancelados, setVuelosCancelados] = useState<Set<string>>(new Set());
+  const jobIdActivoRef = useRef<string | null>(null);
   const [reporteGuardado, setReporteGuardado] = useState<{ resultado: Solucion; fechaInicio: string; dias: number } | null>(() => {
     try {
       const raw = localStorage.getItem('tasfb2b_ultimo_reporte');
@@ -1457,6 +1560,30 @@ function App() {
     } catch { return null; }
   });
   const inicioRealRef = useRef<number | null>(null);
+
+  // ── ESTADOS COLAPSO ──
+  const [colapsoDetectado, setColapsoDetectado] = useState(false);
+  const [motivoColapso, setMotivoColapso] = useState("");
+  const [momentoColapso, setMomentoColapso] = useState<string | null>(null);
+  const [fechaInicioColapso, setFechaInicioColapso] = useState("2026-01-05");
+  const [horaInicioColapso, setHoraInicioColapso] = useState("00:00");
+  const jobIdColapsoRef = useRef<string | null>(null);
+  const intervalColapsoRef = useRef<number | null>(null);
+
+  // Resultado filtrado: excluye vuelos cancelados del mapa y drawers
+  const resultadoFiltrado = useMemo(() => {
+    if (!resultado || vuelosCancelados.size === 0) return resultado;
+    const ocupacionFiltrada = Object.fromEntries(
+      Object.entries(resultado.ocupacionVuelos ?? {}).filter(([key]) => {
+        const sinFecha = key.substring(0, key.lastIndexOf('_'));
+        const partes = sinFecha.split('-');
+        if (partes.length < 3) return true;
+        const claveRuta = `${partes[0]}-${partes[1]}-${partes.slice(2).join(':')}`;
+        return !vuelosCancelados.has(claveRuta);
+      })
+    );
+    return { ...resultado, ocupacionVuelos: ocupacionFiltrada };
+  }, [resultado, vuelosCancelados]);
 
   // Ocupación en tiempo real por aeropuerto — compartido entre MapArea y DrawerAlmacenes
   const ocupacionAeropuertosRT = useMemo(() => {
@@ -1591,25 +1718,34 @@ function App() {
   useEffect(() => {
     if (!simulandoEnVivo) return;
 
-    // Reloj virtual: actualiza cada 250ms → saltos de 0.5 min virtual, posiciones de aviones fluidas
+    // Reloj virtual: actualiza cada 250ms → posiciones de aviones fluidas
+    const esColapso = vistaActiva === "colapso";
     const intervaloVirtual = setInterval(() => {
-      if (!inicioRealRef.current) return;
       const ahora = Date.now();
-      const segsDesdeInicio = (ahora - inicioRealRef.current) / 1000;
-      const [hh, mm] = horaInicioRef.current.split(":").map(Number);
-      const offsetHora = (hh || 0) * 60 + (mm || 0);
-      const minVirtuales = offsetHora + Math.min(segsDesdeInicio * 2, diasRef.current * 1440);
+      let minVirtuales: number;
+      if (esColapso && ultimoPollRef.current) {
+        // En colapso: avanzar desde el último bloque recibido
+        const segsDesdeUltimoPoll = (ahora - ultimoPollRef.current.realMs) / 1000;
+        minVirtuales = ultimoPollRef.current.minutosTotales + segsDesdeUltimoPoll * 2;
+      } else {
+        if (!inicioRealRef.current) return;
+        const segsDesdeInicio = (ahora - inicioRealRef.current) / 1000;
+        const [hh, mm] = horaInicioRef.current.split(":").map(Number);
+        const offsetHora = (hh || 0) * 60 + (mm || 0);
+        minVirtuales = offsetHora + Math.min(segsDesdeInicio * 2, diasRef.current * 1440);
+      }
       setMinutosVirtualesTotales(minVirtuales);
       setHoraVirtualMinutos(minVirtuales % 1440);
 
-      const [fy, fm, fd] = fechaInicioRef.current.split("-").map(Number);
+      const fechaBase = esColapso ? fechaInicioColapso : fechaInicioRef.current;
+      const [fy, fm, fd] = fechaBase.split("-").map(Number);
       const fechaSimVirtual = new Date(fy, fm - 1, fd);
       fechaSimVirtual.setMinutes(fechaSimVirtual.getMinutes() + minVirtuales);
       setTiempoSimuladoTranscurrido(
         `${fechaSimVirtual.getFullYear()}-${String(fechaSimVirtual.getMonth()+1).padStart(2,"0")}-${String(fechaSimVirtual.getDate()).padStart(2,"0")} ` +
         `${String(fechaSimVirtual.getHours()).padStart(2,"0")}:${String(fechaSimVirtual.getMinutes()).padStart(2,"0")}:${String(fechaSimVirtual.getSeconds()).padStart(2,"0")}`
       );
-    }, 1000);
+    }, 250);
 
     // Reloj real: actualiza cada segundo (menos crítico)
     const intervaloReal = setInterval(() => {
@@ -1625,7 +1761,7 @@ function App() {
     }, 1000);
 
     return () => { clearInterval(intervaloVirtual); clearInterval(intervaloReal); };
-  }, [simulandoEnVivo]);
+  }, [simulandoEnVivo, vistaActiva, fechaInicioColapso]);
 
   useEffect(() => { fechaInicioRef.current = fechaInicio; }, [fechaInicio]);
   useEffect(() => { horaInicioRef.current = horaInicio; }, [horaInicio]);
@@ -1668,6 +1804,119 @@ function App() {
     }
   }, []);
 
+  const detectarColapso = (sol: Solucion | null): { colapsado: boolean; motivo: string } => {
+    if (!sol) return { colapsado: false, motivo: "" };
+    for (const [cod, ocup] of Object.entries(sol.ocupacionAeropuertos ?? {})) {
+      const cap = sol.capacidadesAeropuertos?.[cod];
+      if (cap && ocup > cap) return { colapsado: true, motivo: `Capacidad superada en aeropuerto ${cod}` };
+    }
+    for (const [ruta, ocup] of Object.entries(sol.ocupacionVuelos ?? {})) {
+      const cap = sol.capacidadesVuelos?.[ruta];
+      if (cap && ocup > cap) return { colapsado: true, motivo: `Capacidad superada en vuelo ${ruta}` };
+    }
+    if (typeof sol.tasaExito === "number" && sol.tasaExito < 5)
+      return { colapsado: true, motivo: `Tasa de éxito cayó a ${sol.tasaExito.toFixed(1)}% (umbral: 5%)` };
+    return { colapsado: false, motivo: "" };
+  };
+
+  const handleSimularColapso = async () => {
+    if (intervalColapsoRef.current !== null) { clearInterval(intervalColapsoRef.current); intervalColapsoRef.current = null; }
+    setResultado(null);
+    setSimulandoEnVivo(false);
+    setPorcentajeSimulacion(0);
+    setVentanaVirtual(null);
+    setMinutosVirtualesTotales(0);
+    setHoraVirtualMinutos(0);
+    setTiempoSimuladoTranscurrido("");
+    setColapsoDetectado(false);
+    setMotivoColapso("");
+    setMomentoColapso(null);
+    horaVirtualBaseRef.current = null;
+    ultimoPollRef.current = null;
+    ultimaVentanaRef.current = null;
+    setCargando(true);
+
+    try {
+      const fechaInicioSimStr = `${fechaInicioColapso}T${horaInicioColapso}:00`;
+      const { jobId } = await iniciarSimulacionPeriodo(fechaInicioSimStr, 365);
+      jobIdColapsoRef.current = jobId;
+      inicioRealRef.current = Date.now();
+      setCargando(false);
+      setSimulandoEnVivo(true);
+      setProcesandoPrimerBloque(true);
+
+      const fechaInicioSimDate = new Date(fechaInicioSimStr);
+      let completado = false;
+
+      const consultar = async () => {
+        if (completado) return;
+        try {
+          const estadoJob = await obtenerEstadoSimulacion(jobId);
+          setPorcentajeSimulacion(estadoJob.progreso);
+
+          // Actualizar reloj virtual desde ventanaVirtual
+          if (estadoJob.ventanaVirtual && estadoJob.ventanaVirtual !== ultimaVentanaRef.current) {
+            ultimaVentanaRef.current = estadoJob.ventanaVirtual;
+            const fin = estadoJob.ventanaVirtual.split(" → ")[1]?.trim();
+            if (fin) {
+              const [fechaFin, horaFin] = fin.split(" ");
+              const [vy, vm, vd] = fechaFin.split("-").map(Number);
+              const [hh, mm] = horaFin.split(":").map(Number);
+              const diasOff = Math.floor((new Date(vy, vm-1, vd).getTime() - new Date(fechaInicioColapso).getTime()) / 86400000);
+              const min = diasOff * 1440 + hh * 60 + mm;
+              ultimoPollRef.current = { minutosTotales: min, realMs: Date.now() };
+            }
+          }
+
+          if (estadoJob.solucionParcial) {
+            setProcesandoPrimerBloque(false);
+            setResultado(prev => {
+              const nueva = estadoJob.solucionParcial!;
+              const merged = {
+                ...nueva,
+                rutasAsignadas: { ...(prev?.rutasAsignadas ?? {}), ...(nueva.rutasAsignadas ?? {}) },
+                detallesEnvios: { ...(prev?.detallesEnvios ?? {}), ...(nueva.detallesEnvios ?? {}) },
+                fechasTramos: { ...(prev?.fechasTramos ?? {}), ...(nueva.fechasTramos ?? {}) },
+                ocupacionVuelos: Object.keys(nueva.ocupacionVuelos ?? {}).length > 0 ? nueva.ocupacionVuelos : (prev?.ocupacionVuelos ?? {}),
+                ocupacionAeropuertos: Object.keys(nueva.ocupacionAeropuertos ?? {}).length > 0 ? nueva.ocupacionAeropuertos : (prev?.ocupacionAeropuertos ?? {}),
+              };
+              // Detectar colapso
+              const deteccion = detectarColapso(merged);
+              if (deteccion.colapsado && !completado) {
+                completado = true;
+                clearInterval(intervalColapsoRef.current!);
+                intervalColapsoRef.current = null;
+                setColapsoDetectado(true);
+                setMotivoColapso(deteccion.motivo);
+                const minSim = ultimoPollRef.current?.minutosTotales ?? 0;
+                const fechaColapsoReal = new Date(fechaInicioSimDate.getTime() + minSim * 60000);
+                const fmt = (d: Date) => d.toLocaleDateString("es-PE", { day:"2-digit", month:"2-digit", year:"numeric" })
+                  + " " + d.toLocaleTimeString("es-PE", { hour12:false, hour:"2-digit", minute:"2-digit" });
+                setMomentoColapso(fmt(fechaColapsoReal));
+                setSimulandoEnVivo(false);
+                detenerSimulacion(jobId).catch(() => {});
+              }
+              return merged;
+            });
+          }
+
+          if (!completado && (estadoJob.estado === "COMPLETADO" || estadoJob.estado === "ERROR")) {
+            completado = true;
+            clearInterval(intervalColapsoRef.current!);
+            intervalColapsoRef.current = null;
+            setSimulandoEnVivo(false);
+          }
+        } catch { completado = true; clearInterval(intervalColapsoRef.current!); intervalColapsoRef.current = null; setSimulandoEnVivo(false); }
+      };
+
+      await consultar();
+      intervalColapsoRef.current = window.setInterval(consultar, 1500);
+    } catch (error: any) {
+      alert(`Error: ${error?.message ?? "No se pudo iniciar."}`);
+      setCargando(false);
+    }
+  };
+
   const handleSimular = async () => {
     setCargando(true);
     setResultado(null);
@@ -1697,6 +1946,8 @@ function App() {
       localStorage.setItem("diasActivos", dias.toString());
       localStorage.setItem("inicioSimulacionTimestamp", inicioReal.toString());
 
+      jobIdActivoRef.current = jobId;
+      setVuelosCancelados(new Set());
       setCargando(false);
       setSimulandoEnVivo(true);
       setProcesandoPrimerBloque(true);
@@ -2008,10 +2259,10 @@ function App() {
                   horaInicio={horaInicio}
                 />
               )}
-              <MapArea solucion={resultado} progreso={porcentajeSimulacion} modoOscuro={modoOscuro} horaVirtualMinutos={horaVirtualMinutos} minutosVirtualesTotales={minutosVirtualesTotales} fechaInicioSim={fechaInicio} vueloResaltado={vueloResaltado} onVueloResaltadoClear={() => setVueloResaltado(null)} aeropuertoResaltado={aeropuertoResaltado} ocupacionAeropuertosRT={ocupacionAeropuertosRT} onAeropuertoClick={(cod) => { setAeropuertoResaltado(cod); setPanelAlmacenesAbierto(true); setPanelEnviosAbierto(false); setPanelVuelosAbierto(false); }}
+              <MapArea solucion={resultadoFiltrado} progreso={porcentajeSimulacion} modoOscuro={modoOscuro} horaVirtualMinutos={horaVirtualMinutos} minutosVirtualesTotales={minutosVirtualesTotales} fechaInicioSim={fechaInicio} vueloResaltado={vistaActiva === "mapa" ? vueloResaltado : null} onVueloResaltadoClear={() => setVueloResaltado(null)} aeropuertoResaltado={vistaActiva === "mapa" ? aeropuertoResaltado : null} ocupacionAeropuertosRT={ocupacionAeropuertosRT} onAeropuertoClick={(cod) => { setAeropuertoResaltado(cod); setPanelAlmacenesAbierto(true); setPanelEnviosAbierto(false); setPanelVuelosAbierto(false); }}
                 onVueloClick={(key) => { setVueloResaltado(key); setPanelVuelosAbierto(true); setPanelEnviosAbierto(false); setPanelAlmacenesAbierto(false); }}
-                aeropuertosFiltrados={panelAlmacenesAbierto ? aeropuertosFiltrados : null}
-                vuelosFiltrados={panelVuelosAbierto ? vuelosFiltrados : null} />
+                aeropuertosFiltrados={vistaActiva === "mapa" && panelAlmacenesAbierto ? aeropuertosFiltrados : null}
+                vuelosFiltrados={vistaActiva === "mapa" && panelVuelosAbierto ? vuelosFiltrados : null} />
 
 
               {/* Overlay procesando primer bloque */}
@@ -2029,9 +2280,9 @@ function App() {
 
               {/* Drawer lateral de almacenes */}
               <div className={`absolute top-0 right-0 h-full z-[999] bg-slate-900 border-l border-slate-700 shadow-2xl flex flex-col transition-all duration-300 ${panelAlmacenesAbierto ? 'w-[780px]' : 'w-0 overflow-hidden'}`}>
-                {panelAlmacenesAbierto && (
+                {panelAlmacenesAbierto && vistaActiva === "mapa" && (
                   <DrawerAlmacenes
-                    resultado={resultado}
+                    resultado={resultadoFiltrado}
                     minutosVirtualesTotales={minutosVirtualesTotales}
                     fechaInicioSim={fechaInicio}
                     onCerrar={() => { setPanelAlmacenesAbierto(false); setAeropuertosFiltrados(null); }}
@@ -2045,9 +2296,9 @@ function App() {
 
               {/* Drawer lateral de envíos */}
               <div className={`absolute top-0 right-0 h-full z-[999] bg-slate-900 border-l border-slate-700 shadow-2xl flex flex-col transition-all duration-300 ${panelEnviosAbierto ? 'w-[620px]' : 'w-0 overflow-hidden'}`}>
-                {panelEnviosAbierto && (
+                {panelEnviosAbierto && vistaActiva === "mapa" && (
                   <DrawerEnvios
-                    resultado={resultado}
+                    resultado={resultadoFiltrado}
                     minutosVirtualesTotales={minutosVirtualesTotales}
                     fechaInicioSim={fechaInicio}
                     onCerrar={() => setPanelEnviosAbierto(false)}
@@ -2055,22 +2306,31 @@ function App() {
                     onEnfocarAlmacen={(cod) => { setAeropuertoResaltado(cod); }}
                     onVerVuelo={(key) => { setVueloResaltado(key); setPanelVuelosAbierto(true); setPanelEnviosAbierto(false); setPanelAlmacenesAbierto(false); }}
                     onVerAlmacen={(cod) => { setAeropuertoResaltado(cod); setPanelAlmacenesAbierto(true); setPanelEnviosAbierto(false); setPanelVuelosAbierto(false); }}
-
                   />
                 )}
               </div>
 
               {/* Drawer lateral de vuelos activos */}
-              <div className={`absolute top-0 right-0 h-full z-[999] bg-slate-900 border-l border-slate-700 shadow-2xl flex flex-col transition-all duration-300 ${panelVuelosAbierto ? "w-[640px]" : "w-0 overflow-hidden"}`}>
-                {panelVuelosAbierto && (
+              <div className={`absolute top-0 right-0 h-full z-[999] bg-slate-900 border-l border-slate-700 shadow-2xl flex flex-col transition-all duration-300 ${panelVuelosAbierto ? "w-[820px]" : "w-0 overflow-hidden"}`}>
+                {panelVuelosAbierto && vistaActiva === "mapa" && (
                   <DrawerVuelos
-                    resultado={resultado}
+                    resultado={resultadoFiltrado}
                     minutosVirtualesTotales={minutosVirtualesTotales}
                     fechaInicio={fechaInicio}
                     onSeleccionar={(key) => { setVueloResaltado(key); }}
                     onCerrar={() => { setPanelVuelosAbierto(false); setVuelosFiltrados(null); }}
                     vueloExpandir={vueloResaltado}
                     onFiltrados={setVuelosFiltrados}
+                    vuelosCancelados={vuelosCancelados}
+                    onCancelarVuelo={simulandoEnVivo && jobIdActivoRef.current ? async (claveVuelo) => {
+                      if (!confirm(`¿Cancelar vuelo ${claveVuelo}? Los pedidos asignados a este vuelo serán reprogramados en el siguiente bloque.`)) return;
+                      try {
+                        await cancelarVuelo(jobIdActivoRef.current!, claveVuelo);
+                        setVuelosCancelados(prev => new Set([...prev, claveVuelo]));
+                      } catch {
+                        alert('No se pudo cancelar el vuelo.');
+                      }
+                    } : undefined}
                   />
                 )}
               </div>
@@ -2094,8 +2354,140 @@ function App() {
         </div>
 
         {/* VISTA 3: Simulación hasta colapso */}
-        <div className={`w-full h-full ${vistaActiva === "colapso" ? "block" : "hidden"}`}>
-          <SimulacionColapsoPage modoOscuro={modoOscuro} />
+        <div className={`w-full h-full flex ${vistaActiva === "colapso" ? "flex" : "hidden"}`}>
+          {/* Sidebar colapso */}
+          <aside className={`relative ${sidebarAbierto ? "w-80" : "w-0"} bg-slate-900 text-white flex flex-col shadow-xl z-30 transition-all duration-300 overflow-visible`}>
+            <button onClick={() => setSidebarAbierto(!sidebarAbierto)}
+              className="absolute -right-6 top-1/2 -translate-y-1/2 w-6 h-14 bg-slate-800 border border-slate-600 border-l-0 rounded-r-lg flex items-center justify-center text-slate-400 hover:text-white hover:bg-slate-700 transition-colors z-40 shadow-md">
+              <span className="text-[10px]">{sidebarAbierto ? "◀" : "▶"}</span>
+            </button>
+            <div className={`p-6 flex-1 overflow-y-auto ${sidebarAbierto ? "block" : "hidden"}`}>
+              <div className="flex items-center gap-2 mb-6">
+                <OctagonAlert className="text-orange-400" size={18} />
+                <h2 className="text-xs uppercase text-orange-400 font-semibold tracking-widest">Hasta el Colapso</h2>
+              </div>
+              <div className="space-y-6">
+                <div className="flex flex-col space-y-2">
+                  <label className="text-sm text-slate-300">FECHA Y HORA DE INICIO</label>
+                  <div className="flex gap-2">
+                    <input type="date" className="flex-1 bg-white text-tasf-dark p-2 rounded text-sm outline-none"
+                      value={fechaInicioColapso} onChange={e => setFechaInicioColapso(e.target.value)}
+                      disabled={cargando || simulandoEnVivo} />
+                    <input type="time" className="w-24 bg-white text-tasf-dark p-2 rounded text-sm outline-none"
+                      value={horaInicioColapso} onChange={e => setHoraInicioColapso(e.target.value)}
+                      disabled={cargando || simulandoEnVivo} />
+                  </div>
+                </div>
+                <div className="rounded-lg border border-orange-500/30 bg-orange-500/10 p-3 text-xs text-orange-200">
+                  Sin fecha fin — la simulación corre hasta detectar colapso logístico.
+                </div>
+                <button onClick={handleSimularColapso} disabled={cargando || simulandoEnVivo}
+                  className="w-full bg-orange-500 hover:bg-orange-600 disabled:bg-slate-600 text-white font-bold py-3 rounded transition-colors mt-2 shadow-lg flex justify-center items-center gap-2">
+                  {cargando ? <><Loader2 className="animate-spin" size={20}/> CALCULANDO...</>
+                    : simulandoEnVivo ? <><Loader2 className="animate-spin" size={20}/> SIMULANDO...</>
+                    : "INICIAR HASTA COLAPSO"}
+                </button>
+                {/* Estado colapso */}
+                {colapsoDetectado && (
+                  <div className="rounded-xl border border-orange-500 bg-orange-950/40 p-4 space-y-2">
+                    <p className="text-orange-400 font-bold text-sm flex items-center gap-2">
+                      <OctagonAlert size={16}/> Colapso detectado
+                    </p>
+                    <p className="text-orange-200 text-xs">{motivoColapso}</p>
+                    {momentoColapso && <p className="text-slate-400 text-xs">Momento: <span className="text-white font-mono">{momentoColapso}</span></p>}
+                  </div>
+                )}
+                {simulandoEnVivo && !colapsoDetectado && (
+                  <div className="rounded-lg border border-slate-700 bg-slate-800 p-3 space-y-2">
+                    <p className="text-xs text-slate-400 uppercase tracking-widest">Estado</p>
+                    <p className="text-xs text-slate-200">{ventanaVirtual ?? "Procesando..."}</p>
+                    <div className="flex items-center gap-2 text-xs text-slate-400">
+                      <Loader2 className="animate-spin" size={12}/>
+                      <span>{Math.floor(minutosVirtualesTotales / 1440)} días simulados</span>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          </aside>
+
+          {/* Mismo main que período */}
+          <main className="flex-1 flex flex-col relative z-10 overflow-hidden">
+            {(resultado || (porcentajeSimulacion > 0)) && (
+              <div className="bg-slate-900 border-b border-slate-700 px-3 py-1.5 flex gap-2 items-center shrink-0 z-[1000]">
+                <button onClick={() => { setPanelAlmacenesAbierto(v => !v); setPanelEnviosAbierto(false); setPanelVuelosAbierto(false); }}
+                  className={`text-xs font-bold px-3 py-1.5 rounded-lg border flex items-center gap-2 transition-colors ${panelAlmacenesAbierto ? 'bg-slate-700 border-slate-500 text-white' : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-600'}`}>
+                  🏭 Almacenes {panelAlmacenesAbierto ? '▶' : '◀'}
+                </button>
+                <button onClick={() => { setPanelEnviosAbierto(v => !v); setPanelVuelosAbierto(false); setPanelAlmacenesAbierto(false); }}
+                  className={`text-xs font-bold px-3 py-1.5 rounded-lg border flex items-center gap-2 transition-colors ${panelEnviosAbierto ? 'bg-slate-700 border-slate-500 text-white' : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-600'}`}>
+                  📦 Envíos {panelEnviosAbierto ? '▶' : '◀'}
+                </button>
+                <button onClick={() => { setPanelVuelosAbierto(v => !v); setPanelEnviosAbierto(false); setPanelAlmacenesAbierto(false); }}
+                  className={`text-xs font-bold px-3 py-1.5 rounded-lg border flex items-center gap-2 transition-colors ${panelVuelosAbierto ? 'bg-slate-700 border-slate-500 text-white' : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-600'}`}>
+                  ✈ Vuelos activos {panelVuelosAbierto ? '▶' : '◀'}
+                </button>
+                {simulandoEnVivo && (
+                  <div className="ml-auto flex items-center gap-2 text-xs text-slate-400">
+                    <span className="w-1.5 h-1.5 rounded-full bg-orange-400 animate-pulse" />
+                    <span>{Math.floor(minutosVirtualesTotales / 1440)} días simulados</span>
+                  </div>
+                )}
+              </div>
+            )}
+            <div className="flex-1 bg-slate-200 relative">
+              {simulandoEnVivo && (
+                <WidgetTiempos horaRealActual={horaRealActual} tiempoTranscurrido={tiempoTranscurrido}
+                  tiempoSimuladoTranscurrido={tiempoSimuladoTranscurrido}
+                  minutosVirtualesTotales={minutosVirtualesTotales} horaInicio={horaInicioColapso} />
+              )}
+              <MapArea solucion={resultadoFiltrado} progreso={porcentajeSimulacion} modoOscuro={modoOscuro}
+                horaVirtualMinutos={horaVirtualMinutos} minutosVirtualesTotales={minutosVirtualesTotales}
+                fechaInicioSim={fechaInicioColapso} vueloResaltado={vistaActiva === "colapso" ? vueloResaltado : null}
+                onVueloResaltadoClear={() => setVueloResaltado(null)}
+                aeropuertoResaltado={vistaActiva === "colapso" ? aeropuertoResaltado : null} ocupacionAeropuertosRT={ocupacionAeropuertosRT}
+                onAeropuertoClick={cod => { setAeropuertoResaltado(cod); setPanelAlmacenesAbierto(true); setPanelEnviosAbierto(false); setPanelVuelosAbierto(false); }}
+                onVueloClick={key => { setVueloResaltado(key); setPanelVuelosAbierto(true); setPanelEnviosAbierto(false); setPanelAlmacenesAbierto(false); }}
+                aeropuertosFiltrados={vistaActiva === "colapso" && panelAlmacenesAbierto ? aeropuertosFiltrados : null}
+                vuelosFiltrados={vistaActiva === "colapso" && panelVuelosAbierto ? vuelosFiltrados : null} />
+              {procesandoPrimerBloque && (
+                <div className="absolute inset-0 z-[2000] flex flex-col items-center justify-center backdrop-blur-sm bg-slate-900/70">
+                  <div className="bg-slate-800 border border-slate-600 rounded-2xl px-10 py-8 flex flex-col items-center gap-4 shadow-2xl">
+                    <div className="w-10 h-10 border-4 border-orange-400 border-t-transparent rounded-full animate-spin" />
+                    <p className="text-white font-bold text-lg">Procesando simulación</p>
+                    <p className="text-slate-400 text-sm">Ejecutando Tabu Search del primer bloque...</p>
+                  </div>
+                </div>
+              )}
+              <div className={`absolute top-0 right-0 h-full z-[999] bg-slate-900 border-l border-slate-700 shadow-2xl flex flex-col transition-all duration-300 ${panelAlmacenesAbierto ? 'w-[780px]' : 'w-0 overflow-hidden'}`}>
+                {panelAlmacenesAbierto && vistaActiva === "colapso" && <DrawerAlmacenes resultado={resultadoFiltrado} minutosVirtualesTotales={minutosVirtualesTotales}
+                  fechaInicioSim={fechaInicioColapso} onCerrar={() => { setPanelAlmacenesAbierto(false); setAeropuertosFiltrados(null); }}
+                  onSeleccionarAeropuerto={setAeropuertoResaltado} ocupacionAeropuertosRT={ocupacionAeropuertosRT}
+                  aeropuertoExpandir={aeropuertoResaltado} onFiltrados={setAeropuertosFiltrados} />}
+              </div>
+              <div className={`absolute top-0 right-0 h-full z-[999] bg-slate-900 border-l border-slate-700 shadow-2xl flex flex-col transition-all duration-300 ${panelEnviosAbierto ? 'w-[620px]' : 'w-0 overflow-hidden'}`}>
+                {panelEnviosAbierto && vistaActiva === "colapso" && <DrawerEnvios resultado={resultadoFiltrado} minutosVirtualesTotales={minutosVirtualesTotales}
+                  fechaInicioSim={fechaInicioColapso} onCerrar={() => setPanelEnviosAbierto(false)}
+                  onEnfocarVuelo={key => setVueloResaltado(key)} onEnfocarAlmacen={cod => setAeropuertoResaltado(cod)}
+                  onVerVuelo={key => { setVueloResaltado(key); setPanelVuelosAbierto(true); setPanelEnviosAbierto(false); setPanelAlmacenesAbierto(false); }}
+                  onVerAlmacen={cod => { setAeropuertoResaltado(cod); setPanelAlmacenesAbierto(true); setPanelEnviosAbierto(false); setPanelVuelosAbierto(false); }} />}
+              </div>
+              <div className={`absolute top-0 right-0 h-full z-[999] bg-slate-900 border-l border-slate-700 shadow-2xl flex flex-col transition-all duration-300 ${panelVuelosAbierto ? "w-[820px]" : "w-0 overflow-hidden"}`}>
+                {panelVuelosAbierto && vistaActiva === "colapso" && <DrawerVuelos resultado={resultadoFiltrado} minutosVirtualesTotales={minutosVirtualesTotales}
+                  fechaInicio={fechaInicioColapso} onSeleccionar={key => setVueloResaltado(key)}
+                  onCerrar={() => { setPanelVuelosAbierto(false); setVuelosFiltrados(null); }}
+                  vueloExpandir={vueloResaltado} onFiltrados={setVuelosFiltrados}
+                  vuelosCancelados={vuelosCancelados} onCancelarVuelo={undefined} />}
+              </div>
+            </div>
+            {colapsoDetectado && (
+              <div className="w-full bg-orange-500 text-white flex items-center justify-center gap-3 py-2 shadow-md z-20">
+                <OctagonAlert size={16}/>
+                <span className="font-bold tracking-widest uppercase text-sm">COLAPSO LOGÍSTICO DETECTADO</span>
+                {momentoColapso && <span className="text-orange-100 text-sm font-mono">— {momentoColapso}</span>}
+              </div>
+            )}
+          </main>
         </div>
 
         {/* VISTA 3: Cargar Datos */}

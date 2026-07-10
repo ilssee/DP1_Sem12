@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Calendar, Loader2, OctagonAlert } from "lucide-react";
 import MapArea from "../components/MapArea";
-import { iniciarSimulacionPeriodo, obtenerEstadoSimulacion } from "../services/simulacionService";
+import { iniciarSimulacionPeriodo, obtenerEstadoSimulacion, detenerSimulacion } from "../services/simulacionService";
 import type { Solucion } from "../types";
 
 const formatearFecha = (date: Date) =>
@@ -24,9 +24,8 @@ const formatearFechaHoraLocal = (date: Date) => {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}:00`;
 };
 
-// Horizonte interno usado para la simulación hasta colapso.
-// Si un desarrollador desea cambiarlo, basta con ajustar este valor.
-const HORIZONTE_DIAS_CONFIGURABLE = 5;
+// Horizonte largo para que el backend nunca termine solo — el frontend lo detiene al detectar colapso.
+const HORIZONTE_DIAS_CONFIGURABLE = 365;
 
 const calcularBloqueBackend = (dias: number) => {
   let K = 168;
@@ -85,8 +84,8 @@ const detectarColapsoLogistico = (solucion: Solucion | null) => {
     }
   }
 
-  if (typeof solucion.tasaExito === "number" && solucion.tasaExito < 0.05) {
-    return { colapsado: true, motivo: "La tasa de éxito cayó por debajo del umbral operativo" };
+  if (typeof solucion.tasaExito === "number" && solucion.tasaExito < 5) {
+    return { colapsado: true, motivo: `La tasa de éxito cayó a ${solucion.tasaExito.toFixed(1)}% (umbral: 5%)` };
   }
 
   return { colapsado: false, motivo: "" };
@@ -106,14 +105,17 @@ export default function SimulacionColapsoPage({ modoOscuro = true }: { modoOscur
   const [minutosVirtualesTotales, setMinutosVirtualesTotales] = useState(0);
   const [horaVirtualMinutos, setHoraVirtualMinutos] = useState(0);
   const intervalRef = useRef<number | null>(null);
+  const relojRef = useRef<number | null>(null);
+  const jobIdRef = useRef<string | null>(null);
+  const inicioRealRef = useRef<number | null>(null);
+  const minutosBaseRef = useRef<number>(0);
 
   const bloqueBackend = useMemo(() => calcularBloqueBackend(diasHorizon), [diasHorizon]);
 
   useEffect(() => {
     return () => {
-      if (intervalRef.current !== null) {
-        window.clearInterval(intervalRef.current);
-      }
+      if (intervalRef.current !== null) window.clearInterval(intervalRef.current);
+      if (relojRef.current !== null) window.clearInterval(relojRef.current);
     };
   }, []);
 
@@ -137,15 +139,14 @@ export default function SimulacionColapsoPage({ modoOscuro = true }: { modoOscur
     const fechaInicioSim = formatearFechaHoraLocal(fechaInicioSimDate);
 
     const finalizar = () => {
-      if (intervalRef.current !== null) {
-        window.clearInterval(intervalRef.current);
-        intervalRef.current = null;
-      }
+      if (intervalRef.current !== null) { window.clearInterval(intervalRef.current); intervalRef.current = null; }
+      if (relojRef.current !== null) { window.clearInterval(relojRef.current); relojRef.current = null; }
       setSimulando(false);
     };
 
     try {
       const { jobId } = await iniciarSimulacionPeriodo(fechaInicioSim, diasHorizon);
+      jobIdRef.current = jobId;
       let acumulado: Solucion | null = null;
       let completado = false;
       const totalMinutosVirtuales = diasHorizon * 24 * 60;
@@ -157,7 +158,25 @@ export default function SimulacionColapsoPage({ modoOscuro = true }: { modoOscur
         const progresoActual = Math.round(Math.min(100, estadoJob.progreso ?? 0));
         setProgreso(progresoActual);
 
-        const minutosSimulados = Math.round((progresoActual / 100) * totalMinutosVirtuales);
+        // Calcular minutos virtuales desde la ventana del backend (más preciso que usar progreso%)
+        let minutosSimulados = Math.round((progresoActual / 100) * totalMinutosVirtuales);
+        if (estadoJob.ventanaVirtual) {
+          // formato: "2026-01-05 02:48 → 2026-01-07 20:00"
+          const partes = estadoJob.ventanaVirtual.split(" → ");
+          if (partes.length === 2) {
+            const [fechaFin, horaFin] = partes[1].trim().split(" ");
+            if (fechaFin && horaFin) {
+              const [fy, fm, fd] = fechaInicio.split("-").map(Number);
+              const [vy, vm, vd] = fechaFin.split("-").map(Number);
+              const [hh, mm] = horaFin.split(":").map(Number);
+              const inicioDate = new Date(fy, fm - 1, fd);
+              const finDate = new Date(vy, vm - 1, vd);
+              const diasOffset = Math.floor((finDate.getTime() - inicioDate.getTime()) / 86400000);
+              minutosSimulados = diasOffset * 1440 + hh * 60 + mm;
+            }
+          }
+        }
+        minutosBaseRef.current = minutosSimulados;
         setMinutosVirtualesTotales(minutosSimulados);
         setHoraVirtualMinutos(minutosSimulados % 1440);
 
@@ -173,6 +192,7 @@ export default function SimulacionColapsoPage({ modoOscuro = true }: { modoOscur
             const fechaColapsoReal = new Date(fechaInicioSimDate.getTime() + minutosSimulados * 60 * 1000);
             setMomentoColapso(`${formatearFecha(fechaColapsoReal)} ${formatearHora(fechaColapsoReal)}`);
             setMensaje(`Colapso detectado en ${formatearFecha(fechaColapsoReal)} ${formatearHora(fechaColapsoReal)}`);
+            if (jobIdRef.current) detenerSimulacion(jobIdRef.current).catch(() => {});
             finalizar();
             return;
           }
@@ -197,10 +217,23 @@ export default function SimulacionColapsoPage({ modoOscuro = true }: { modoOscur
         }
       };
 
+      inicioRealRef.current = Date.now();
+      minutosBaseRef.current = 0;
+
+      // Reloj animado: mueve aviones suavemente entre polls (2 min virtuales por segundo real)
+      relojRef.current = window.setInterval(() => {
+        if (!inicioRealRef.current) return;
+        const segsTranscurridos = (Date.now() - inicioRealRef.current) / 1000;
+        const min = minutosBaseRef.current + segsTranscurridos * 2;
+        setMinutosVirtualesTotales(min);
+        setHoraVirtualMinutos(min % 1440);
+      }, 250);
+
       await consultarEstado();
       intervalRef.current = window.setInterval(() => {
         void consultarEstado();
       }, 1500);
+
     } catch (error: any) {
       const msg = error?.response?.data?.message ?? error?.message ?? "No se pudo completar la simulación.";
       alert(`Error: ${msg}`);
@@ -261,9 +294,12 @@ export default function SimulacionColapsoPage({ modoOscuro = true }: { modoOscur
         <div className="rounded-xl border border-slate-700 bg-slate-800 p-4 space-y-3">
           <p className="text-xs uppercase tracking-widest text-slate-400">Estado</p>
           <p className="text-sm text-slate-200">{mensaje || "Esperando inicio"}</p>
-          <div className="h-2 rounded-full bg-slate-700 overflow-hidden">
-            <div className="h-2 rounded-full bg-orange-500 transition-all duration-500" style={{ width: `${progreso}%` }} />
-          </div>
+          {simulando && !colapsoDetectado && (
+            <div className="flex items-center gap-2 text-xs text-slate-400">
+              <Loader2 className="animate-spin" size={12} />
+              <span>{Math.floor(minutosVirtualesTotales / 1440)} días simulados</span>
+            </div>
+          )}
           {colapsoDetectado && (
             <div className="space-y-1 text-sm text-orange-200">
               <p className="font-semibold">Colapso detectado</p>

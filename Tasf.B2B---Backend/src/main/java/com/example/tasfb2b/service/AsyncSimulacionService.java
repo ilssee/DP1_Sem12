@@ -10,9 +10,12 @@ import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 @Service
 public class AsyncSimulacionService {
@@ -71,6 +74,9 @@ public class AsyncSimulacionService {
             // Estado acumulado entre pasos: evita recalcular el histórico completo en cada iteración
             Solucion estadoAcumulado = new Solucion();
 
+            // Mapa de todos los pedidos procesados: idPedido → Pedido (para poder re-optimizarlos)
+            Map<String, Pedido> todosPedidosProcesados = new HashMap<>();
+
             // Acumulador de métricas globales (no se reinicia entre pasos, a diferencia de la ocupación)
             MetricasAcumuladas metricas = new MetricasAcumuladas();
 
@@ -84,6 +90,10 @@ public class AsyncSimulacionService {
 
             // 3. BUCLE DE CONSUMO POR BLOQUES
             for (int paso = 0; paso < totalPasos; paso++) {
+                if (job.isDetenido()) {
+                    System.out.println("🛑 Job " + jobId + " detenido en paso " + paso + " por señal de colapso.");
+                    break;
+                }
                 long inicioPaso = System.currentTimeMillis();
                 LocalDateTime ventanaInicio = inicio.plusMinutes((long) paso * Sc);
                 LocalDateTime ventanaFin = ventanaInicio.plusMinutes(Sc);
@@ -98,12 +108,80 @@ public class AsyncSimulacionService {
 
                 // C. Ejecutar Algoritmo (Ta)
                 t0 = System.currentTimeMillis();
+
+                // Registrar pedidos nuevos para poder re-optimizarlos después si se cancela su vuelo
+                for (Pedido p : pedidosNuevos) todosPedidosProcesados.put(p.getIdPedido(), p);
+
+                // Filtrar vuelos cancelados para este bloque
+                Set<String> cancelados = job.getVuelosCancelados();
+                java.time.format.DateTimeFormatter fmtClave = java.time.format.DateTimeFormatter.ofPattern("HH:mm:ss");
+                List<Vuelo> vuelosEfectivos = cancelados.isEmpty()
+                    ? vuelos
+                    : vuelos.stream()
+                        .filter(v -> !cancelados.contains(v.getOrigen() + "-" + v.getDestino() + "-" + (v.getHoraSalida() != null ? v.getHoraSalida().format(fmtClave) : "")))
+                        .collect(java.util.stream.Collectors.toList());
+
+                // Detectar pedidos ya asignados que usan un vuelo cancelado → re-planificar
+                List<Pedido> pedidosAfectados = new ArrayList<>();
+                if (!cancelados.isEmpty()) {
+                    Iterator<Map.Entry<String, List<Vuelo>>> it =
+                        estadoAcumulado.getRutasAsignadas().entrySet().iterator();
+                    while (it.hasNext()) {
+                        Map.Entry<String, List<Vuelo>> entry = it.next();
+                        boolean usaCancelado = entry.getValue().stream().anyMatch(v -> {
+                            String clave = v.getOrigen() + "-" + v.getDestino() + "-" + (v.getHoraSalida() != null ? v.getHoraSalida().format(fmtClave) : "");
+                            return cancelados.contains(clave);
+                        });
+                        if (usaCancelado) {
+                            Pedido pedidoOriginal = todosPedidosProcesados.get(entry.getKey());
+                            if (pedidoOriginal != null) {
+                                // Clonar con fechaRegistro = ahora para que Tabu Search solo use vuelos futuros
+                                Pedido pedidoReplan = new Pedido(
+                                    pedidoOriginal.getIdPedido(),
+                                    pedidoOriginal.getOrigen(),
+                                    pedidoOriginal.getDestino(),
+                                    ventanaInicio,
+                                    pedidoOriginal.getCantidadMaletas(),
+                                    pedidoOriginal.getIdCliente()
+                                );
+                                pedidosAfectados.add(pedidoReplan);
+                                estadoAcumulado.getPedidosReplanificados().add(entry.getKey());
+                                it.remove(); // quitar ruta cancelada del estado acumulado
+                                System.out.println("  ⚠ Re-planificando pedido " + entry.getKey() +
+                                    " (" + pedidoOriginal.getOrigen() + "→" + pedidoOriginal.getDestino() + ")");
+                            }
+                        }
+                    }
+                    if (!pedidosAfectados.isEmpty()) {
+                        System.out.println("  ✈ Vuelos cancelados (" + cancelados.size() + "): " + cancelados);
+                        System.out.println("  ↺ Total pedidos a re-planificar: " + pedidosAfectados.size());
+                    }
+                }
+
+                // Combinar afectados + nuevos para optimizar juntos
+                List<Pedido> pedidosAOptimizar = new ArrayList<>(pedidosAfectados);
+                pedidosAOptimizar.addAll(pedidosNuevos);
+
                 Solucion solucionParcial;
-                if (pedidosNuevos.isEmpty()) {
-                    // Sin pedidos nuevos: devolver el estado acumulado tal cual (sin tabu search)
-                    solucionParcial = tabuSearchService.ejecutarOptimizacionConEstado(estadoAcumulado, List.of(), vuelos, aeropuertos, 0);
+                if (pedidosAOptimizar.isEmpty()) {
+                    solucionParcial = tabuSearchService.ejecutarOptimizacionConEstado(estadoAcumulado, List.of(), vuelosEfectivos, aeropuertos, 0);
                 } else {
-                    solucionParcial = tabuSearchService.ejecutarOptimizacionConEstado(estadoAcumulado, pedidosNuevos, vuelos, aeropuertos, 20);
+                    solucionParcial = tabuSearchService.ejecutarOptimizacionConEstado(estadoAcumulado, pedidosAOptimizar, vuelosEfectivos, aeropuertos, 20);
+                }
+
+                // Log resultado de re-planificación
+                if (!pedidosAfectados.isEmpty()) {
+                    for (Pedido p : pedidosAfectados) {
+                        List<Vuelo> nuevaRuta = solucionParcial.getRutasAsignadas().get(p.getIdPedido());
+                        if (nuevaRuta != null && !nuevaRuta.isEmpty()) {
+                            String rutaStr = nuevaRuta.stream()
+                                .map(v -> v.getOrigen() + "→" + v.getDestino())
+                                .collect(java.util.stream.Collectors.joining(", "));
+                            System.out.println("  ✓ " + p.getIdPedido() + " re-planificado: " + rutaStr);
+                        } else {
+                            System.out.println("  ✗ " + p.getIdPedido() + " SIN RUTA ALTERNATIVA");
+                        }
+                    }
                 }
                 tTabu[paso] = System.currentTimeMillis() - t0;
 
@@ -112,6 +190,7 @@ public class AsyncSimulacionService {
                 estadoAcumulado.getOcupacionVuelos().putAll(solucionParcial.getOcupacionVuelos());
                 estadoAcumulado.getOcupacionAeropuertos().putAll(solucionParcial.getOcupacionAeropuertos());
                 estadoAcumulado.getRutasAsignadas().putAll(solucionParcial.getRutasAsignadas());
+                // pedidosReplanificados ya se acumula en estadoAcumulado directamente
                 tAcum[paso] = System.currentTimeMillis() - t0;
 
                 // D. Enriquecer (con todos los pedidos acumulados para detallesEnvios)
@@ -123,9 +202,9 @@ public class AsyncSimulacionService {
                 t0 = System.currentTimeMillis();
                 // Enviar rutas acumuladas completas al frontend
                 solucionParcial.setRutasAsignadas(new HashMap<>(estadoAcumulado.getRutasAsignadas()));
+                solucionParcial.setPedidosReplanificados(new java.util.HashSet<>(estadoAcumulado.getPedidosReplanificados()));
 
                 // Agregar vuelos cuya salida cae dentro de la ventana actual con valor 0 si no asignados
-                java.time.format.DateTimeFormatter fmtBloque = java.time.format.DateTimeFormatter.ofPattern("HH:mm:ss");
                 java.time.LocalDate fechaDesde = ventanaInicio.toLocalDate();
                 java.time.LocalDate fechaHasta = ventanaFin.toLocalDate();
                 for (java.time.LocalDate fecha = fechaDesde; !fecha.isAfter(fechaHasta); fecha = fecha.plusDays(1)) {
@@ -133,10 +212,10 @@ public class AsyncSimulacionService {
                         if (v.getHoraSalida() == null) continue;
                         java.time.LocalDateTime salidaDT = java.time.LocalDateTime.of(fecha, v.getHoraSalida());
                         if (salidaDT.isBefore(ventanaInicio) || salidaDT.isAfter(ventanaFin.plusHours(24))) continue;
-                        String clave = v.getOrigen() + "-" + v.getDestino() + "-" + v.getHoraSalida().format(fmtBloque) + "_" + fecha;
+                        String clave = v.getOrigen() + "-" + v.getDestino() + "-" + v.getHoraSalida().format(fmtClave) + "_" + fecha;
                         solucionParcial.getOcupacionVuelos().putIfAbsent(clave, 0);
                         // Capacidad por ruta (clave sin fecha)
-                        String claveRuta = v.getOrigen() + "-" + v.getDestino() + "-" + v.getHoraSalida().format(fmtBloque);
+                        String claveRuta = v.getOrigen() + "-" + v.getDestino() + "-" + v.getHoraSalida().format(fmtClave);
                         solucionParcial.getCapacidadesVuelos().putIfAbsent(claveRuta, v.getCapacidadMax());
                     }
                 }

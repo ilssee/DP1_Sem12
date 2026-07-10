@@ -75,7 +75,13 @@ public class TabuSearchService {
         // 1. Solución inicial voraz para pedidos de simulación
         Solucion solucionActual = generarSolucionInicialVorazConEstado(pedidosSimulacion, vuelosPorOrigen, mapaAeros, estadoBase);
 
-        solucionActual.getRutasAsignadas().putAll(estadoBase.getRutasAsignadas());
+        // Copiar rutas del historial, EXCEPTO las de pedidos que se están re-planificando ahora
+        // (para no sobreescribir la ruta recién calculada con la ruta vieja del estado base)
+        Set<String> idsSimulacion = new HashSet<>();
+        for (Pedido p : pedidosSimulacion) idsSimulacion.add(p.getIdPedido());
+        estadoBase.getRutasAsignadas().forEach((id, ruta) -> {
+            if (!idsSimulacion.contains(id)) solucionActual.getRutasAsignadas().put(id, ruta);
+        });
         solucionActual.setFitness(evaluarFitness(solucionActual, pedidosSimulacion, mapaAeros, mapaVuelos));
 
         // Tracking del mejor global
