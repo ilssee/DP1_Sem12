@@ -19,3 +19,7 @@ html, body, #root {
   margin: 0;
   background-color: var(--color-tasf-gray);
 }
+.mapa-oscuro {
+  /* Invierte los colores (blanco a negro), rota el color para mantener azules/verdes, y ajusta el brillo */
+  filter: invert(100%) hue-rotate(180deg) brightness(90%) contrast(85%);
+}

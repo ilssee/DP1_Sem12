@@ -815,12 +815,10 @@ export default function MapArea({
       >
         <RedibujarMapa />
         <TileLayer
-          url={
-            modoOscuro
-              ? "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
-              : "https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png"
-          }
-          attribution='&copy; <a href="https://carto.com/">CartoDB</a>'
+         key={modoOscuro ? "oscuro" : "claro"} /* <-- ESTA LÍNEA ES LA CLAVE */
+         url="https://mt1.google.com/vt/lyrs=m&hl=es&x={x}&y={y}&z={z}"
+         attribution='&copy; Google Maps'
+        className={modoOscuro ? "mapa-oscuro" : ""}
         />
         <EventosMapa
           alHacerClic={() => {
