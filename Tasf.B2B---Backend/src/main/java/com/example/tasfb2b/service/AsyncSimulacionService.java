@@ -115,10 +115,14 @@ public class AsyncSimulacionService {
                 // Filtrar vuelos cancelados para este bloque
                 Set<String> cancelados = job.getVuelosCancelados();
                 java.time.format.DateTimeFormatter fmtClave = java.time.format.DateTimeFormatter.ofPattern("HH:mm:ss");
+                String fechaBloque = ventanaInicio.toLocalDate().toString();
                 List<Vuelo> vuelosEfectivos = cancelados.isEmpty()
                     ? vuelos
                     : vuelos.stream()
-                        .filter(v -> !cancelados.contains(v.getOrigen() + "-" + v.getDestino() + "-" + (v.getHoraSalida() != null ? v.getHoraSalida().format(fmtClave) : "")))
+                        .filter(v -> {
+                            String claveConFecha = v.getOrigen() + "-" + v.getDestino() + "-" + (v.getHoraSalida() != null ? v.getHoraSalida().format(fmtClave) : "") + "_" + fechaBloque;
+                            return !cancelados.contains(claveConFecha);
+                        })
                         .collect(java.util.stream.Collectors.toList());
 
                 // Detectar pedidos ya asignados que usan un vuelo cancelado → re-planificar
@@ -129,8 +133,8 @@ public class AsyncSimulacionService {
                     while (it.hasNext()) {
                         Map.Entry<String, List<Vuelo>> entry = it.next();
                         boolean usaCancelado = entry.getValue().stream().anyMatch(v -> {
-                            String clave = v.getOrigen() + "-" + v.getDestino() + "-" + (v.getHoraSalida() != null ? v.getHoraSalida().format(fmtClave) : "");
-                            return cancelados.contains(clave);
+                            String claveConFecha = v.getOrigen() + "-" + v.getDestino() + "-" + (v.getHoraSalida() != null ? v.getHoraSalida().format(fmtClave) : "") + "_" + fechaBloque;
+                            return cancelados.contains(claveConFecha);
                         });
                         if (usaCancelado) {
                             Pedido pedidoOriginal = todosPedidosProcesados.get(entry.getKey());

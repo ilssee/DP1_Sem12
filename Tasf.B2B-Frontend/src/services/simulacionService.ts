@@ -63,10 +63,11 @@ export const detenerSimulacion = async (jobId: string): Promise<void> => {
 };
 
 // 4. CANCELAR UN VUELO EN TIEMPO REAL
-export const cancelarVuelo = async (jobId: string, claveVuelo: string): Promise<void> => {
-  await axios.post(`${API_BASE_URL}/simulacion/${jobId}/cancelar-vuelo`, null, {
-    params: { claveVuelo },
+export const cancelarVuelo = async (jobId: string, claveVuelo: string, horaVirtualActual: string): Promise<{ clave: string; fecha: string }> => {
+  const response = await axios.post<{ cancelado: string; fecha: string }>(`${API_BASE_URL}/simulacion/${jobId}/cancelar-vuelo`, null, {
+    params: { claveVuelo, horaVirtualActual },
   });
+  return { clave: response.data.cancelado, fecha: response.data.fecha };
 };
 
 // ── MÉTODOS DEL DÍA A DÍA ──

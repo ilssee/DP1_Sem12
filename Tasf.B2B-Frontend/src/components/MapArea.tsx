@@ -29,6 +29,9 @@ interface MapAreaProps {
   vuelosFiltrados?: string[] | null;
   rutaEnvioSeleccionada?: string | null;
   onRutaEnvioSeleccionadaClear?: () => void;
+  vuelosCancelados?: Set<string>;
+  mostrarVuelosCancelados?: boolean;
+  onToggleCancelados?: () => void;
 }
 
 function EventosMapa({ alHacerClic }: { alHacerClic: () => void }) {
@@ -189,6 +192,9 @@ export default function MapArea({
   vuelosFiltrados,
   rutaEnvioSeleccionada,
   onRutaEnvioSeleccionadaClear,
+  vuelosCancelados,
+  mostrarVuelosCancelados = false,
+  onToggleCancelados,
 }: MapAreaProps) {
   const [vueloSeleccionado, setVueloSeleccionado] = useState<string | null>(
     null,
@@ -608,6 +614,31 @@ export default function MapArea({
     rutaEnvioSeleccionada,
   ]);
 
+  const canceladosActivos = useMemo(() => {
+    if (!vuelosCancelados || vuelosCancelados.size === 0) return [];
+    const horasLlegadaMap = solucion?.horasLlegada ?? {};
+    const minutosActuales = minutosVirtualesTotales ?? horaVirtualMinutos;
+    return [...vuelosCancelados].flatMap(clave => {
+      const idx = clave.lastIndexOf('_');
+      const ruta = idx >= 0 ? clave.substring(0, idx) : clave;
+      const fecha = idx >= 0 ? clave.substring(idx + 1) : '';
+      const partes = ruta.split('-');
+      const origen = partes[0]; const destino = partes[1]; const horaSalida = partes[2] ?? '';
+      const horaLlegadaRaw = horasLlegadaMap[ruta] ?? '';
+      if (!horaLlegadaRaw) return [];
+      const normH = (t: string) => { const p = (t ?? '').split(':'); return `${p[0].padStart(2,'0')}:${(p[1]??'00').padStart(2,'0')}:${(p[2]??'00').padStart(2,'0')}`; };
+      const horaLlegada = normH(horaLlegadaRaw);
+      const progreso = calcularProgresoTotal(fecha, horaSalida, horaLlegada, fechaInicioSim ?? '', minutosActuales ?? 0);
+      if (progreso < 0 || progreso >= 1) return [];
+      const coordO = aeropuertosDB[origen]; const coordD = aeropuertosDB[destino];
+      if (!coordO || !coordD) return [];
+      const rumbo = calcularRumbo(coordO.lat, coordO.lng, coordD.lat, coordD.lng);
+      const lat = coordO.lat + (coordD.lat - coordO.lat) * progreso;
+      const lng = coordO.lng + (coordD.lng - coordO.lng) * progreso;
+      return [{ clave, ruta, origen, destino, horaSalida, horaLlegada, fecha, lat, lng, rumbo, coordO, coordD }];
+    });
+  }, [vuelosCancelados, solucion, minutosVirtualesTotales, horaVirtualMinutos, fechaInicioSim]);
+
   return (
     <div style={{ position: "relative", height: "100%", width: "100%" }}>
       {/* Panel Flotante Unificado (Evita que los elementos se encimen) */}
@@ -796,6 +827,24 @@ export default function MapArea({
           />
           {mostrarVacíos ? "Ocultar vuelos vacíos" : "Mostrar vuelos vacíos"}
         </button>
+
+        {canceladosActivos.length > 0 && onToggleCancelados && (
+          <button
+            onClick={onToggleCancelados}
+            className={`flex items-center gap-1.5 text-[11px] font-bold px-3 py-1.5 rounded-lg shadow-lg border transition-colors w-fit ${mostrarVuelosCancelados ? "bg-slate-600 border-slate-400 text-white" : "bg-slate-900/90 border-slate-600 text-slate-400 hover:text-white hover:border-slate-400"}`}
+          >
+            <span
+              style={{
+                display: "inline-block",
+                width: 10,
+                height: 10,
+                borderRadius: "50%",
+                background: "#fb923c",
+              }}
+            />
+            {mostrarVuelosCancelados ? "Ocultar cancelados" : "Mostrar cancelados"} ({vuelosCancelados.size})
+          </button>
+        )}
       </div>
 
       {/* Mapa Base */}
@@ -909,6 +958,25 @@ export default function MapArea({
         {segmentosRutaSeleccionada.lineas}
         {lineasRutas}
         {elementosMapa.avionesEnPantalla}
+        {mostrarVuelosCancelados && canceladosActivos.map(v => (
+          <React.Fragment key={`cancelado-${v.clave}`}>
+            <Polyline
+              positions={[[v.coordO.lat, v.coordO.lng], [v.coordD.lat, v.coordD.lng]]}
+              color="#fb923c" weight={2} opacity={0.5} dashArray="8 6" />
+            <Marker
+              position={[v.lat, v.lng]}
+              icon={getPlaneIcon('#fb923c', false, false, v.rumbo)}
+              zIndexOffset={0}>
+              <Popup autoPan={false}>
+                <div className="text-center min-w-[110px]">
+                  <strong className="text-orange-600">✕ Cancelado</strong><br/>
+                  <span className="text-xs font-mono">{v.origen} → {v.destino}</span><br/>
+                  <span className="text-slate-500 text-xs">{v.horaSalida.substring(0,5)} → {v.horaLlegada.substring(0,5)}</span>
+                </div>
+              </Popup>
+            </Marker>
+          </React.Fragment>
+        ))}
       </MapContainer>
     </div>
   );

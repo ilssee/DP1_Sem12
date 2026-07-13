@@ -214,11 +214,18 @@ function DrawerVuelos({ resultado, minutosVirtualesTotales, fechaInicio, onSelec
   vuelosCancelados?: Set<string>;
   onCancelarVuelo?: (claveVuelo: string) => void;
 }) {
+  const [tabVuelos, setTabVuelos] = useState<'vuelo'|'espera'|'cancelados'>('vuelo');
   const [orden, setOrden] = useState<{ col: 'cant'|'cap'|'pct'|'envios'|'minSalida'|'minLlegada'|'origen'|'destino'; dir: 1|-1 }>({ col: 'minSalida', dir: 1 });
+  const [pagVuelo, setPagVuelo] = useState(0);
+  const [pagEspera, setPagEspera] = useState(0);
+  const PAGE_SIZE = 20;
   const [filtrosAbiertos, setFiltrosAbiertos] = useState(false);
   const [filtroOrigen, setFiltroOrigen] = useState('');
   const [filtroDestino, setFiltroDestino] = useState('');
+  const [filtroHoraHH, setFiltroHoraHH] = useState('');
+  const [filtroHoraMM, setFiltroHoraMM] = useState('');
   const [filtroSemaforoV, setFiltroSemaforoV] = useState<''|'verde'|'amarillo'|'rojo'|'vacio'>('');
+  const [busquedaUT, setBusquedaUT] = useState('');
   const filaRefs = useRef<Map<string, HTMLTableRowElement>>(new Map());
 
   useEffect(() => {
@@ -226,6 +233,9 @@ function DrawerVuelos({ resultado, minutosVirtualesTotales, fechaInicio, onSelec
     setExpandido(vueloExpandir);
     setFiltroOrigen('');
     setFiltroDestino('');
+    setFiltroHoraHH('');
+    setFiltroHoraMM('');
+    setBusquedaUT('');
     setTimeout(() => {
       const row = filaRefs.current.get(vueloExpandir);
       row?.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -273,41 +283,100 @@ function DrawerVuelos({ resultado, minutosVirtualesTotales, fechaInicio, onSelec
         const minSalida = dias * 1440 + parseHoraAMin(horaSalida);
         let minLlegada = dias * 1440 + parseHoraAMin(horaLlegada);
         if (minLlegada <= minSalida) minLlegada += 1440;
-        if (minutosVirtualesTotales < minSalida || minutosVirtualesTotales >= minLlegada) return null;
+        // Solo mostrar vuelos del día virtual actual
+        const diaVirtualActual = Math.floor(minutosVirtualesTotales / 1440);
+        if (dias !== diaVirtualActual) return null;
+        // Determinar estado: completado → excluir
+        let estado: 'espera' | 'vuelo' | 'completado';
+        if (minutosVirtualesTotales < minSalida) estado = 'espera';
+        else if (minutosVirtualesTotales < minLlegada) estado = 'vuelo';
+        else estado = 'completado';
+        if (estado === 'completado') return null;
         const envios = enviosPorVuelo.get(`${origen}-${destino}-${horaSalida}`) ?? 0;
         const cap = (resultado.capacidadesVuelos ?? {})[claveRuta] ?? 350;
         const pct = cap > 0 ? Math.round(((cant as number) / cap) * 100) : 0;
-        return { key, origen, destino, horaSalida, horaLlegada, fecha, cant: cant as number, envios, minSalida, minLlegada, pct, cap };
+        return { key, origen, destino, horaSalida, horaLlegada, fecha, cant: cant as number, envios, minSalida, minLlegada, pct, cap, estado };
       })
       .filter(Boolean) as any[];
   }, [resultado, minutosVirtualesTotales, fechaInicio]);
 
-  const ordenado = useMemo(() => {
+  const { enVuelo, enEspera, ordenado } = useMemo(() => {
     const fo = filtroOrigen.trim().toUpperCase();
     const fd = filtroDestino.trim().toUpperCase();
-    return [...vuelosActivos]
-      .filter(v => {
-        if (filtroSemaforoV !== 'vacio' && v.cant === 0) return false; // ocultar vacíos salvo que se filtren explícitamente
-        if (fo && !v.origen.toUpperCase().includes(fo)) return false;
-        if (fd && !v.destino.toUpperCase().includes(fd)) return false;
-        if (filtroSemaforoV === 'vacio' && v.cant !== 0) return false;
-        if (filtroSemaforoV === 'verde' && !(v.cant > 0 && v.pct < 50)) return false;
-        if (filtroSemaforoV === 'amarillo' && !(v.pct >= 50 && v.pct < 80)) return false;
-        if (filtroSemaforoV === 'rojo' && v.pct < 80) return false;
-        return true;
-      })
-      .sort((a, b) => {
-        if (orden.col === 'origen' || orden.col === 'destino')
-          return a[orden.col].localeCompare(b[orden.col]) * orden.dir;
-        return ((a[orden.col] ?? 0) - (b[orden.col] ?? 0)) * orden.dir;
-      });
-  }, [vuelosActivos, orden, filtroOrigen, filtroDestino, filtroSemaforoV]);
+    const fh = filtroHoraHH || filtroHoraMM
+      ? `${filtroHoraHH.padStart(2,'0')}:${filtroHoraMM.padStart(2,'0')}`
+      : '';
+    const bu = busquedaUT.trim().toUpperCase();
+    const filtrado = [...vuelosActivos].filter(v => {
+      if (filtroSemaforoV !== 'vacio' && v.cant === 0) return false;
+      if (fo && !v.origen.toUpperCase().includes(fo)) return false;
+      if (fd && !v.destino.toUpperCase().includes(fd)) return false;
+      if (fh && !v.horaSalida.includes(fh)) return false;
+      if (bu && !`${v.origen}-${v.destino}-${v.horaSalida}`.toUpperCase().includes(bu)) return false;
+      if (filtroSemaforoV === 'vacio' && v.cant !== 0) return false;
+      if (filtroSemaforoV === 'verde' && !(v.cant > 0 && v.pct < 50)) return false;
+      if (filtroSemaforoV === 'amarillo' && !(v.pct >= 50 && v.pct < 80)) return false;
+      if (filtroSemaforoV === 'rojo' && v.pct < 80) return false;
+      return true;
+    }).sort((a, b) => {
+      if (orden.col === 'origen' || orden.col === 'destino')
+        return a[orden.col].localeCompare(b[orden.col]) * orden.dir;
+      return ((a[orden.col] ?? 0) - (b[orden.col] ?? 0)) * orden.dir;
+    });
+    return {
+      enVuelo: filtrado.filter((v: any) => v.estado === 'vuelo'),
+      enEspera: filtrado.filter((v: any) => v.estado === 'espera'),
+      ordenado: filtrado,
+    };
+  }, [vuelosActivos, orden, filtroOrigen, filtroDestino, filtroHoraHH, filtroHoraMM, filtroSemaforoV, busquedaUT]);
 
-  const hayFiltroActivoV = !!(filtroOrigen || filtroDestino || filtroSemaforoV);
+  const hayFiltroActivoV = !!(filtroOrigen || filtroDestino || filtroHoraHH || filtroHoraMM || filtroSemaforoV || busquedaUT);
+  useEffect(() => { setPagVuelo(0); setPagEspera(0); }, [filtroOrigen, filtroDestino, filtroHoraHH, filtroHoraMM, filtroSemaforoV, busquedaUT]);
   useEffect(() => {
     if (!onFiltrados) return;
     onFiltrados(hayFiltroActivoV ? ordenado.map(v => v.key) : null);
   }, [ordenado, hayFiltroActivoV]);
+
+  const canceladosVisibles = useMemo(() => {
+    if (!vuelosCancelados || vuelosCancelados.size === 0) return [];
+    const horasLlegadaMap = resultado?.horasLlegada ?? {};
+    const fo = filtroOrigen.trim().toUpperCase();
+    const fd = filtroDestino.trim().toUpperCase();
+    const fh = filtroHoraHH || filtroHoraMM ? `${filtroHoraHH.padStart(2,'0')}:${filtroHoraMM.padStart(2,'0')}` : '';
+    const bu = busquedaUT.trim().toUpperCase();
+    const [fy, fm, fd2] = fechaInicio.split('-').map(Number);
+
+    return [...vuelosCancelados].map(clave => {
+      const idx = clave.lastIndexOf('_');
+      const ruta = idx >= 0 ? clave.substring(0, idx) : clave;
+      const fecha = idx >= 0 ? clave.substring(idx + 1) : '';
+      const partes = ruta.split('-');
+      const origen = partes[0] ?? '';
+      const destino = partes[1] ?? '';
+      const horaSalida = partes[2] ?? '';
+      // Buscar hora llegada
+      const horaLlegada = normH(horasLlegadaMap[ruta] ?? '');
+      if (!horaLlegada || horaLlegada === '00:00:00') return null;
+      // Calcular minutos relativos al inicio
+      const [vy, vm, vd] = fecha.split('-').map(Number);
+      if (isNaN(vy)) return null;
+      const dias = Math.floor((new Date(vy,vm-1,vd).getTime() - new Date(fy,fm-1,fd2).getTime()) / 86400000);
+      const minSalida = dias * 1440 + parseHoraAMin(horaSalida);
+      let minLlegada = dias * 1440 + parseHoraAMin(horaLlegada);
+      if (minLlegada <= minSalida) minLlegada += 1440;
+      // Solo mostrar si el vuelo estaría "en vuelo" ahora
+      if (minutosVirtualesTotales < minSalida || minutosVirtualesTotales >= minLlegada) return null;
+      return { clave, origen, destino, horaSalida, horaLlegada, fecha, ruta };
+    })
+    .filter(Boolean)
+    .filter((v: any) => {
+      if (fo && !v.origen.toUpperCase().includes(fo)) return false;
+      if (fd && !v.destino.toUpperCase().includes(fd)) return false;
+      if (fh && !v.horaSalida.includes(fh)) return false;
+      if (bu && !`${v.origen}-${v.destino}-${v.horaSalida}`.toUpperCase().includes(bu)) return false;
+      return true;
+    }) as { clave: string; origen: string; destino: string; horaSalida: string; horaLlegada: string; fecha: string; ruta: string }[];
+  }, [vuelosCancelados, resultado, minutosVirtualesTotales, fechaInicio, filtroOrigen, filtroDestino, filtroHoraHH, filtroHoraMM, busquedaUT]);
 
   const [expandido, setExpandido] = useState<string | null>(null);
 
@@ -338,8 +407,35 @@ function DrawerVuelos({ resultado, minutosVirtualesTotales, fechaInicio, onSelec
   return (
     <>
       <div className="px-4 py-3 border-b border-slate-700 flex items-center justify-between shrink-0">
-        <h3 className="text-white font-bold text-sm">✈ En el aire ahora ({ordenado.length}{ordenado.length !== vuelosActivos.length ? `/${vuelosActivos.length}` : ''})</h3>
+        <div className="flex items-center gap-1">
+          <button onClick={() => setTabVuelos('vuelo')}
+            className={`px-3 py-1 rounded-lg text-xs font-bold transition-colors ${tabVuelos === 'vuelo' ? 'bg-emerald-600 text-white' : 'text-slate-400 hover:text-white'}`}>
+            En vuelo ({enVuelo.length})
+          </button>
+          <button onClick={() => setTabVuelos('espera')}
+            className={`px-3 py-1 rounded-lg text-xs font-bold transition-colors ${tabVuelos === 'espera' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}>
+            En espera ({enEspera.length})
+          </button>
+          <button onClick={() => setTabVuelos('cancelados')}
+            className={`px-3 py-1 rounded-lg text-xs font-bold transition-colors ${tabVuelos === 'cancelados' ? 'bg-orange-500 text-white' : 'text-slate-400 hover:text-white'} ${canceladosVisibles.length > 0 ? '' : 'opacity-40 pointer-events-none'}`}>
+            Cancelados ({canceladosVisibles.length})
+          </button>
+        </div>
         <div className="flex items-center gap-2">
+          {/* Barra de búsqueda por código UT */}
+          <div className="relative">
+            <input
+              type="text"
+              value={busquedaUT}
+              onChange={e => setBusquedaUT(e.target.value)}
+              placeholder="Buscar UT (ej: SPIM-SBGR)"
+              className="bg-slate-800 text-white text-[10px] rounded px-2 py-1 pr-6 w-40 outline-none border border-slate-600 focus:border-tasf-green placeholder-slate-500"
+            />
+            {busquedaUT && (
+              <button onClick={() => setBusquedaUT('')} className="absolute right-1.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white text-xs leading-none">✕</button>
+            )}
+          </div>
+          <div className="w-px h-4 bg-slate-600" />
           {/* Semáforo vuelos */}
           {(['vacio','verde','amarillo','rojo'] as const).map(s => (
             <button key={s} onClick={() => setFiltroSemaforoV(f => f === s ? '' : s)}
@@ -348,14 +444,14 @@ function DrawerVuelos({ resultado, minutosVirtualesTotales, fechaInicio, onSelec
           ))}
           <div className="w-px h-4 bg-slate-600" />
           <button onClick={() => setFiltrosAbiertos(v => !v)}
-            className={`text-[10px] px-2 py-0.5 rounded border transition-colors ${filtrosAbiertos || filtroOrigen || filtroDestino ? 'border-tasf-green bg-tasf-green/20 text-tasf-green' : 'border-slate-600 text-slate-400 hover:text-white hover:border-slate-400'}`}>
-            ⚙ {filtrosAbiertos ? '▲' : '▼'}{(filtroOrigen || filtroDestino) ? ' •' : ''}
+            className={`text-[10px] px-2 py-0.5 rounded border transition-colors ${filtrosAbiertos || filtroOrigen || filtroDestino || filtroHoraHH || filtroHoraMM ? 'border-tasf-green bg-tasf-green/20 text-tasf-green' : 'border-slate-600 text-slate-400 hover:text-white hover:border-slate-400'}`}>
+            ⚙ {filtrosAbiertos ? '▲' : '▼'}{(filtroOrigen || filtroDestino || filtroHoraHH || filtroHoraMM) ? ' •' : ''}
           </button>
           <button onClick={onCerrar} className="text-slate-400 hover:text-white text-lg leading-none">✕</button>
         </div>
       </div>
-      {/* Panel de filtros desplegable */}
-      {filtrosAbiertos && <div className="border-b border-slate-700 bg-slate-900">
+      {/* Panel de filtros desplegable — solo en pestañas de vuelos */}
+      {tabVuelos !== 'cancelados' && filtrosAbiertos && <div className="border-b border-slate-700 bg-slate-900">
         <div className="flex gap-2 px-4 py-2">
           <div className="flex-1">
             <label className="text-[9px] text-slate-500 uppercase tracking-wider block mb-1">Origen</label>
@@ -375,130 +471,185 @@ function DrawerVuelos({ resultado, minutosVirtualesTotales, fechaInicio, onSelec
               placeholder="Todos los destinos"
             />
           </div>
-          {(filtroOrigen || filtroDestino) && (
-            <button onClick={() => { setFiltroOrigen(''); setFiltroDestino(''); }}
+          <div className="w-32">
+            <label className="text-[9px] text-slate-500 uppercase tracking-wider block mb-1">Hora salida</label>
+            <div className="flex items-center gap-1 bg-slate-800 border border-slate-700 focus-within:border-tasf-green rounded px-2 py-1">
+              <input
+                type="number"
+                min={0} max={23}
+                value={filtroHoraHH}
+                onChange={e => { const v = e.target.value.replace(/\D/g,''); if (v === '' || +v <= 23) setFiltroHoraHH(v); }}
+                placeholder="HH"
+                className="w-7 bg-transparent text-white text-[11px] outline-none text-center placeholder-slate-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+              />
+              <span className="text-slate-400 text-[11px] font-bold">:</span>
+              <input
+                type="number"
+                min={0} max={59}
+                value={filtroHoraMM}
+                onChange={e => { const v = e.target.value.replace(/\D/g,''); if (v === '' || +v <= 59) setFiltroHoraMM(v); }}
+                placeholder="MM"
+                className="w-7 bg-transparent text-white text-[11px] outline-none text-center placeholder-slate-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+              />
+            </div>
+          </div>
+          {(filtroOrigen || filtroDestino || filtroHoraHH || filtroHoraMM) && (
+            <button onClick={() => { setFiltroOrigen(''); setFiltroDestino(''); setFiltroHoraHH(''); setFiltroHoraMM(''); }}
               className="self-end text-[10px] text-slate-400 hover:text-white px-2 py-1 rounded bg-slate-700 hover:bg-slate-600 transition-colors mb-0.5">
               ✕
             </button>
           )}
         </div>
       </div>}
-      <div className="px-3 py-1 border-b border-slate-700 shrink-0">
-        <p className="text-[9px] text-slate-500 italic">👆 Haz clic en una fila para ver los envíos consolidados</p>
-      </div>
-      <div className="overflow-auto flex-1">
-        <table className="w-full text-[11px] text-white min-w-[780px]">
-          <thead className="sticky top-0 bg-slate-800 text-[9px] uppercase tracking-wider z-10">
-            <tr>
-              <th className="px-2 py-2 text-left text-slate-400 w-6"></th>
-              <th className="px-2 py-2 text-left text-slate-400 whitespace-nowrap">ID Vuelo</th>
-              <th className={thClass('origen')} onClick={() => toggleOrden('origen')}>Orig{indicator('origen')}</th>
-              <th className={thClass('destino')} onClick={() => toggleOrden('destino')}>Dest{indicator('destino')}</th>
-              <th className={thClass('cant')} onClick={() => toggleOrden('cant')}>Ocup.{indicator('cant')}</th>
-              <th className={thClass('cap')} onClick={() => toggleOrden('cap')}>Cap.{indicator('cap')}</th>
-              <th className={thClass('pct')} onClick={() => toggleOrden('pct')}>% Ocup{indicator('pct')}</th>
-              <th className={thClass('minSalida')} onClick={() => toggleOrden('minSalida')}>Salida{indicator('minSalida')}</th>
-              <th className={thClass('minLlegada')} onClick={() => toggleOrden('minLlegada')}>Llegada{indicator('minLlegada')}</th>
-              {onCancelarVuelo && <th className="px-2 py-2 text-left text-slate-400">Acción</th>}
-            </tr>
-          </thead>
-          <tbody>
-            {ordenado.length === 0 ? (
-              <tr><td colSpan={9} className="text-center text-slate-500 py-8 italic">Sin vuelos activos</td></tr>
-            ) : ordenado.map((v: any) => {
-              const abierto = expandido === v.key;
-              const enviosDelVuelo = enviosPorVueloKey[v.key] ?? [];
-              const semaforoClass = v.cant === 0 ? 'bg-slate-500/20 text-slate-400 border border-slate-500/40' : v.pct >= 80 ? 'bg-red-500/20 text-red-400 border border-red-500/40' : v.pct >= 50 ? 'bg-yellow-500/20 text-yellow-400 border border-yellow-500/40' : 'bg-green-500/20 text-green-400 border border-green-500/40';
-              return (
-                <React.Fragment key={v.key}>
-                  <tr
-                    ref={(el) => { if (el) filaRefs.current.set(v.key, el); else filaRefs.current.delete(v.key); }}
-                    onClick={() => { setExpandido(abierto ? null : v.key); onSeleccionar(v.key); }}
-                    className={`border-b border-slate-800 cursor-pointer transition-colors ${abierto ? 'bg-slate-800' : 'hover:bg-slate-800/60'}`}>
-                    <td className="px-3 py-2 text-slate-400 text-center">{abierto ? '▼' : '▶'}</td>
-                    <td className="px-3 py-2 font-mono text-[10px] text-slate-200 font-bold">
-                      {v.origen}-{v.destino}-{v.horaSalida}<br/>
-                      <span className="text-slate-500 text-[9px] font-normal">{v.fecha}</span>
-                    </td>
-                    <td className="px-2 py-2 font-bold">{v.origen}</td>
-                    <td className="px-2 py-2 font-bold">{v.destino}</td>
-                    <td className="px-2 py-2 text-center">
-                      <span className={`font-bold px-1.5 py-0.5 rounded text-[10px] ${semaforoClass}`}>{v.cant} mal.</span>
-                    </td>
-                    <td className="px-2 py-2 text-slate-300 font-mono text-center">{v.cap}</td>
-                    <td className="px-2 py-2 text-center">
-                      <span className={`font-bold px-1.5 py-0.5 rounded text-[10px] ${semaforoClass}`}>{v.pct}%</span>
-                    </td>
-                    <td className="px-2 py-2 text-tasf-green font-mono">{v.horaSalida}</td>
-                    <td className="px-2 py-2 font-mono text-slate-300">{v.horaLlegada}</td>
-                    {onCancelarVuelo && (() => {
-                      const claveRuta = `${v.origen}-${v.destino}-${v.horaSalida}`;
-                      const cancelado = vuelosCancelados?.has(claveRuta);
-                      return (
-                        <td className="px-2 py-2" onClick={e => e.stopPropagation()}>
-                          {cancelado ? (
-                            <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-red-500/20 text-red-400 border border-red-500/30">
-                              ✕ Cancelado
-                            </span>
-                          ) : (
-                            <button
-                              onClick={() => onCancelarVuelo(claveRuta)}
-                              className="text-[10px] font-bold px-2 py-0.5 rounded bg-slate-700 hover:bg-red-500/20 text-slate-400 hover:text-red-400 border border-slate-600 hover:border-red-500/40 transition-colors"
-                            >
-                              Cancelar
-                            </button>
-                          )}
-                        </td>
-                      );
-                    })()}
-                  </tr>
-                  {abierto && (
-                    <tr className="border-b border-slate-700">
-                      <td colSpan={9} className="bg-slate-900 px-0 py-0">
-                        <div className="px-4 py-3">
-                          <p className="text-[10px] font-bold text-tasf-green mb-2">
-                            📦 Envíos consolidados en la UT: {v.origen}-{v.destino}-{v.horaSalida}
-                          </p>
-                          {enviosDelVuelo.length === 0 ? (
-                            <p className="text-slate-500 italic text-[10px]">Sin envíos asignados</p>
-                          ) : (
-                            <table className="w-full text-[10px] text-white">
-                              <thead>
-                                <tr className="text-[9px] uppercase text-slate-500 border-b border-slate-700">
-                                  <th className="pb-1 text-left">ID Envío</th>
-                                  <th className="pb-1 text-left">ID Cliente</th>
-                                  <th className="pb-1 text-left">Cant. Maletas</th>
-                                  <th className="pb-1 text-left">Origen</th>
-                                  <th className="pb-1 text-left">Destino</th>
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {enviosDelVuelo.map((e: any) => (
-                                  <tr key={e.id} className="border-b border-slate-800">
-                                    <td className="py-1 font-mono text-tasf-green">{e.id}</td>
-                                    <td className="py-1 font-mono text-slate-300">{e.idCliente}</td>
-                                    <td className="py-1">
-                                      <span className={`font-bold px-1.5 py-0.5 rounded ${e.cantidadMaletas >= 10 ? 'bg-yellow-500/20 text-yellow-400' : 'bg-tasf-green/20 text-tasf-green'}`}>
-                                        {e.cantidadMaletas} mal.
-                                      </span>
-                                    </td>
-                                    <td className="py-1 font-bold">{e.origen}</td>
-                                    <td className="py-1 font-bold">{e.destino}</td>
-                                  </tr>
-                                ))}
-                              </tbody>
-                            </table>
-                          )}
-                        </div>
-                      </td>
+      {(tabVuelos === 'vuelo' || tabVuelos === 'espera') && (() => {
+        const renderSeccion = (lista: any[], titulo: string, badgeClass: string, pag: number, setPag: (p: number) => void) => {
+          const totalPags = Math.ceil(lista.length / PAGE_SIZE);
+          const pagina = lista.slice(pag * PAGE_SIZE, (pag + 1) * PAGE_SIZE);
+          return (
+            <div className="shrink-0">
+              <div className="px-3 py-1.5 bg-slate-800/60 border-b border-slate-700 flex items-center justify-between">
+                <span className={`text-[10px] font-bold px-2 py-0.5 rounded border ${badgeClass}`}>{titulo} ({lista.length})</span>
+                {totalPags > 1 && (
+                  <div className="flex items-center gap-1">
+                    <button disabled={pag === 0} onClick={() => setPag(pag - 1)} className="px-1.5 py-0.5 text-[10px] rounded bg-slate-700 hover:bg-slate-600 disabled:opacity-30 text-white">‹</button>
+                    <span className="text-[10px] text-slate-400">{pag + 1}/{totalPags}</span>
+                    <button disabled={pag >= totalPags - 1} onClick={() => setPag(pag + 1)} className="px-1.5 py-0.5 text-[10px] rounded bg-slate-700 hover:bg-slate-600 disabled:opacity-30 text-white">›</button>
+                  </div>
+                )}
+              </div>
+              {pagina.length === 0 ? (
+                <p className="text-center text-slate-500 py-4 italic text-[11px]">Sin vuelos</p>
+              ) : (
+                <table className="w-full text-[11px] text-white min-w-[780px]">
+                  <thead className="bg-slate-800 text-[9px] uppercase tracking-wider">
+                    <tr>
+                      <th className="px-2 py-1.5 text-left text-slate-400 w-6"></th>
+                      <th className="px-2 py-1.5 text-left text-slate-400 whitespace-nowrap">ID Vuelo</th>
+                      <th className={thClass('origen')} onClick={() => toggleOrden('origen')}>Orig{indicator('origen')}</th>
+                      <th className={thClass('destino')} onClick={() => toggleOrden('destino')}>Dest{indicator('destino')}</th>
+                      <th className={thClass('cant')} onClick={() => toggleOrden('cant')}>Ocup.{indicator('cant')}</th>
+                      <th className={thClass('cap')} onClick={() => toggleOrden('cap')}>Cap.{indicator('cap')}</th>
+                      <th className={thClass('pct')} onClick={() => toggleOrden('pct')}>% Ocup{indicator('pct')}</th>
+                      <th className={thClass('minSalida')} onClick={() => toggleOrden('minSalida')}>Salida{indicator('minSalida')}</th>
+                      <th className={thClass('minLlegada')} onClick={() => toggleOrden('minLlegada')}>Llegada{indicator('minLlegada')}</th>
+                      {onCancelarVuelo && <th className="px-2 py-1.5 text-left text-slate-400">Acción</th>}
                     </tr>
-                  )}
-                </React.Fragment>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
+                  </thead>
+                  <tbody>
+                    {pagina.map((v: any) => {
+                      const abierto = expandido === v.key;
+                      const enviosDelVuelo = enviosPorVueloKey[v.key] ?? [];
+                      const semaforoClass = v.cant === 0 ? 'bg-slate-500/20 text-slate-400 border border-slate-500/40' : v.pct >= 80 ? 'bg-red-500/20 text-red-400 border border-red-500/40' : v.pct >= 50 ? 'bg-yellow-500/20 text-yellow-400 border border-yellow-500/40' : 'bg-green-500/20 text-green-400 border border-green-500/40';
+                      return (
+                        <React.Fragment key={v.key}>
+                          <tr
+                            ref={(el) => { if (el) filaRefs.current.set(v.key, el); else filaRefs.current.delete(v.key); }}
+                            onClick={() => { setExpandido(abierto ? null : v.key); onSeleccionar(v.key); }}
+                            className={`border-b border-slate-800 cursor-pointer transition-colors ${abierto ? 'bg-slate-800' : 'hover:bg-slate-800/60'}`}>
+                            <td className="px-3 py-2 text-slate-400 text-center">{abierto ? '▼' : '▶'}</td>
+                            <td className="px-3 py-2 font-mono text-[10px] text-slate-200 font-bold">
+                              {v.origen}-{v.destino}-{v.horaSalida}<br/>
+                              <span className="text-slate-500 text-[9px] font-normal">{v.fecha}</span>
+                            </td>
+                            <td className="px-2 py-2 font-bold">{v.origen}</td>
+                            <td className="px-2 py-2 font-bold">{v.destino}</td>
+                            <td className="px-2 py-2 text-center"><span className={`font-bold px-1.5 py-0.5 rounded text-[10px] ${semaforoClass}`}>{v.cant} mal.</span></td>
+                            <td className="px-2 py-2 text-slate-300 font-mono text-center">{v.cap}</td>
+                            <td className="px-2 py-2 text-center"><span className={`font-bold px-1.5 py-0.5 rounded text-[10px] ${semaforoClass}`}>{v.pct}%</span></td>
+                            <td className="px-2 py-2 text-tasf-green font-mono">{v.horaSalida}</td>
+                            <td className="px-2 py-2 font-mono text-slate-300">{v.horaLlegada}</td>
+                            {onCancelarVuelo && (() => {
+                              const claveRuta = `${v.origen}-${v.destino}-${v.horaSalida}`;
+                              const claveConFecha = `${claveRuta}_${v.fecha}`;
+                              const cancelado = vuelosCancelados?.has(claveConFecha);
+                              return (
+                                <td className="px-2 py-2" onClick={e => e.stopPropagation()}>
+                                  {cancelado
+                                    ? <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-red-500/20 text-red-400 border border-red-500/30">✕ Cancelado</span>
+                                    : <button onClick={() => onCancelarVuelo(claveRuta)} className="text-[10px] font-bold px-2 py-0.5 rounded bg-slate-700 hover:bg-red-500/20 text-slate-400 hover:text-red-400 border border-slate-600 hover:border-red-500/40 transition-colors">Cancelar</button>}
+                                </td>
+                              );
+                            })()}
+                          </tr>
+                          {abierto && (
+                            <tr className="border-b border-slate-700">
+                              <td colSpan={9} className="bg-slate-900 px-0 py-0">
+                                <div className="px-4 py-3">
+                                  <p className="text-[10px] font-bold text-tasf-green mb-2">📦 Envíos consolidados en la UT: {v.origen}-{v.destino}-{v.horaSalida}</p>
+                                  {enviosDelVuelo.length === 0 ? (
+                                    <p className="text-slate-500 italic text-[10px]">Sin envíos asignados</p>
+                                  ) : (
+                                    <table className="w-full text-[10px] text-white">
+                                      <thead><tr className="text-[9px] uppercase text-slate-500 border-b border-slate-700">
+                                        <th className="pb-1 text-left">ID Envío</th>
+                                        <th className="pb-1 text-left">ID Cliente</th>
+                                        <th className="pb-1 text-left">Cant. Maletas</th>
+                                        <th className="pb-1 text-left">Origen</th>
+                                        <th className="pb-1 text-left">Destino</th>
+                                      </tr></thead>
+                                      <tbody>
+                                        {enviosDelVuelo.map((e: any) => (
+                                          <tr key={e.id} className="border-b border-slate-800">
+                                            <td className="py-1 font-mono text-tasf-green">{e.id}</td>
+                                            <td className="py-1 font-mono text-slate-300">{e.idCliente}</td>
+                                            <td className="py-1"><span className={`font-bold px-1.5 py-0.5 rounded ${e.cantidadMaletas >= 10 ? 'bg-yellow-500/20 text-yellow-400' : 'bg-tasf-green/20 text-tasf-green'}`}>{e.cantidadMaletas} mal.</span></td>
+                                            <td className="py-1 font-bold">{e.origen}</td>
+                                            <td className="py-1 font-bold">{e.destino}</td>
+                                          </tr>
+                                        ))}
+                                      </tbody>
+                                    </table>
+                                  )}
+                                </div>
+                              </td>
+                            </tr>
+                          )}
+                        </React.Fragment>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          );
+        };
+        const lista = tabVuelos === 'vuelo' ? enVuelo : enEspera;
+        const pag = tabVuelos === 'vuelo' ? pagVuelo : pagEspera;
+        const setPag = tabVuelos === 'vuelo' ? setPagVuelo : setPagEspera;
+        return (
+          <div className="overflow-auto flex-1">
+            <p className="px-3 py-1 text-[9px] text-slate-500 italic">👆 Haz clic en una fila para ver los envíos consolidados</p>
+            {renderSeccion(lista, tabVuelos === 'vuelo' ? 'En vuelo' : 'En espera',
+              tabVuelos === 'vuelo' ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30' : 'bg-blue-500/20 text-blue-300 border-blue-500/30',
+              pag, setPag)}
+          </div>
+        );
+      })()}
+      {tabVuelos === 'cancelados' && (
+        <div className="overflow-auto flex-1 p-4 space-y-2">
+          {canceladosVisibles.length === 0 ? (
+            <p className="text-slate-500 italic text-sm text-center mt-8">
+              {vuelosCancelados && vuelosCancelados.size > 0
+                ? 'Ningún vuelo cancelado está activo en el tiempo virtual actual'
+                : 'No hay vuelos cancelados'}
+            </p>
+          ) : canceladosVisibles.map(v => (
+            <div key={v.clave} className="flex items-center justify-between bg-red-500/10 border border-red-500/20 rounded-lg px-4 py-3">
+              <div className="flex items-center gap-3">
+                <span className="w-2 h-2 rounded-full bg-red-400 shrink-0" />
+                <div>
+                  <p className="font-mono font-bold text-red-300 text-sm">{v.origen} → {v.destino}</p>
+                  <p className="text-slate-500 text-[10px] font-mono">{v.ruta}</p>
+                </div>
+              </div>
+              <div className="text-right">
+                <p className="text-slate-300 font-mono text-sm">{v.horaSalida.substring(0,5)} → {v.horaLlegada.substring(0,5)}</p>
+                <p className="text-slate-500 text-[10px]">{v.fecha}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </>
   );
 }
@@ -1561,6 +1712,8 @@ function App() {
   const [modoOscuro, setModoOscuro] = useState(true);
   const [mostrarReporte, setMostrarReporte] = useState(false);
   const [vuelosCancelados, setVuelosCancelados] = useState<Set<string>>(new Set());
+  const [mostrarVuelosCancelados, setMostrarVuelosCancelados] = useState(false);
+  const [toastCancelacion, setToastCancelacion] = useState<{ mensaje: string; fecha: string } | null>(null);
   const jobIdActivoRef = useRef<string | null>(null);
   const [reporteGuardado, setReporteGuardado] = useState<{ resultado: Solucion; fechaInicio: string; dias: number } | null>(() => {
     try {
@@ -1583,13 +1736,9 @@ function App() {
   const resultadoFiltrado = useMemo(() => {
     if (!resultado || vuelosCancelados.size === 0) return resultado;
     const ocupacionFiltrada = Object.fromEntries(
-      Object.entries(resultado.ocupacionVuelos ?? {}).filter(([key]) => {
-        const sinFecha = key.substring(0, key.lastIndexOf('_'));
-        const partes = sinFecha.split('-');
-        if (partes.length < 3) return true;
-        const claveRuta = `${partes[0]}-${partes[1]}-${partes.slice(2).join(':')}`;
-        return !vuelosCancelados.has(claveRuta);
-      })
+      Object.entries(resultado.ocupacionVuelos ?? {}).filter(([key]) =>
+        !vuelosCancelados.has(key)
+      )
     );
     return { ...resultado, ocupacionVuelos: ocupacionFiltrada };
   }, [resultado, vuelosCancelados]);
@@ -2236,7 +2385,7 @@ function App() {
                   onClick={() => { setPanelVuelosAbierto(v => !v); setPanelEnviosAbierto(false); setPanelAlmacenesAbierto(false); }}
                   className={`text-xs font-bold px-3 py-1.5 rounded-lg border flex items-center gap-2 transition-colors ${panelVuelosAbierto ? 'bg-slate-700 border-slate-500 text-white' : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-600'}`}
                 >
-                  ✈ Vuelos activos {panelVuelosAbierto ? '▶' : '◀'}
+                  ✈ Vuelos {panelVuelosAbierto ? '▶' : '◀'}
                 </button>
 
                 {(simulandoEnVivo || (!simulandoEnVivo && porcentajeSimulacion > 0 && porcentajeSimulacion <= 100)) && (() => {
@@ -2271,8 +2420,19 @@ function App() {
               <MapArea solucion={resultadoFiltrado} progreso={porcentajeSimulacion} modoOscuro={modoOscuro} horaVirtualMinutos={horaVirtualMinutos} minutosVirtualesTotales={minutosVirtualesTotales} fechaInicioSim={fechaInicio} vueloResaltado={vistaActiva === "mapa" ? vueloResaltado : null} onVueloResaltadoClear={() => setVueloResaltado(null)} aeropuertoResaltado={vistaActiva === "mapa" ? aeropuertoResaltado : null} ocupacionAeropuertosRT={ocupacionAeropuertosRT} onAeropuertoClick={(cod) => { setAeropuertoResaltado(cod); setPanelAlmacenesAbierto(true); setPanelEnviosAbierto(false); setPanelVuelosAbierto(false); }}
                 onVueloClick={(key) => { setVueloResaltado(key); setPanelVuelosAbierto(true); setPanelEnviosAbierto(false); setPanelAlmacenesAbierto(false); }}
                 aeropuertosFiltrados={vistaActiva === "mapa" && panelAlmacenesAbierto ? aeropuertosFiltrados : null}
-                vuelosFiltrados={vistaActiva === "mapa" && panelVuelosAbierto ? vuelosFiltrados : null} />
+                vuelosFiltrados={vistaActiva === "mapa" && panelVuelosAbierto ? vuelosFiltrados : null}
+                vuelosCancelados={vuelosCancelados} mostrarVuelosCancelados={mostrarVuelosCancelados}
+                onToggleCancelados={() => setMostrarVuelosCancelados(v => !v)} />
 
+
+              {/* Toast cancelación */}
+              {toastCancelacion && (
+                <div className="absolute top-4 left-1/2 -translate-x-1/2 z-[2100] flex items-center gap-3 bg-slate-800 border border-orange-400/60 text-white rounded-xl px-5 py-3 shadow-2xl animate-fade-in">
+                  <span className="w-2.5 h-2.5 rounded-full bg-orange-400 shrink-0" />
+                  <span className="text-sm font-semibold">{toastCancelacion.mensaje}</span>
+                  <button onClick={() => setToastCancelacion(null)} className="ml-2 text-slate-400 hover:text-white text-xs">✕</button>
+                </div>
+              )}
 
               {/* Overlay procesando primer bloque */}
               {procesandoPrimerBloque && (
@@ -2334,8 +2494,19 @@ function App() {
                     onCancelarVuelo={simulandoEnVivo && jobIdActivoRef.current ? async (claveVuelo) => {
                       if (!confirm(`¿Cancelar vuelo ${claveVuelo}? Los pedidos asignados a este vuelo serán reprogramados en el siguiente bloque.`)) return;
                       try {
-                        await cancelarVuelo(jobIdActivoRef.current!, claveVuelo);
-                        setVuelosCancelados(prev => new Set([...prev, claveVuelo]));
+                        const { clave: claveConFecha, fecha } = await cancelarVuelo(jobIdActivoRef.current!, claveVuelo, tiempoSimuladoTranscurrido);
+                        setVuelosCancelados(prev => new Set([...prev, claveConFecha]));
+                        const hoyVirtual = tiempoSimuladoTranscurrido.split(' ')[0];
+                        const esMismoDia = fecha === hoyVirtual;
+                        const partes = claveVuelo.split('-');
+                        const ruta = `${partes[0]} → ${partes[1]}`;
+                        setToastCancelacion({
+                          mensaje: esMismoDia
+                            ? `Vuelo ${ruta} cancelado para hoy (${fecha})`
+                            : `Vuelo ${ruta} cancelado para mañana (${fecha})`,
+                          fecha,
+                        });
+                        setTimeout(() => setToastCancelacion(null), 5000);
                       } catch {
                         alert('No se pudo cancelar el vuelo.');
                       }
@@ -2434,7 +2605,7 @@ function App() {
                 </button>
                 <button onClick={() => { setPanelVuelosAbierto(v => !v); setPanelEnviosAbierto(false); setPanelAlmacenesAbierto(false); }}
                   className={`text-xs font-bold px-3 py-1.5 rounded-lg border flex items-center gap-2 transition-colors ${panelVuelosAbierto ? 'bg-slate-700 border-slate-500 text-white' : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-600'}`}>
-                  ✈ Vuelos activos {panelVuelosAbierto ? '▶' : '◀'}
+                  ✈ Vuelos {panelVuelosAbierto ? '▶' : '◀'}
                 </button>
                 {simulandoEnVivo && (
                   <div className="ml-auto flex items-center gap-2 text-xs text-slate-400">
