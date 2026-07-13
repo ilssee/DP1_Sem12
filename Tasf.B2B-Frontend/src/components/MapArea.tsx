@@ -851,24 +851,15 @@ export default function MapArea({
             aeropuertosFiltrados !== null &&
             aeropuertosFiltrados !== undefined &&
             !aeropuertosFiltrados.includes(codigo);
-          const pinW = resaltado ? 26 : 18;
-          const pinH = resaltado ? 36 : 26;
+          const pinW = resaltado ? 32 : 24;
+          const pinH = resaltado ? 32 : 24;
           const fillColor =
             pct >= 80 ? "#E32929" : pct >= 50 ? "#FFB800" : "#22c55e";
           const pinDinamico = new L.DivIcon({
-            html: `<svg viewBox="0 0 28 24" width="${pinW}" height="${pinH}" xmlns="http://www.w3.org/2000/svg" opacity="${aeroFilteredOut ? 0.15 : 1}">
-          <rect x="1" y="9" width="26" height="14" rx="1" fill="${fillColor}" stroke="rgba(0,0,0,0.5)" stroke-width="0.8"/>
-          <rect x="1" y="7" width="26" height="3" rx="0.5" fill="${fillColor}" stroke="rgba(0,0,0,0.5)" stroke-width="0.8"/>
-          <rect x="8" y="4" width="12" height="4" rx="0.5" fill="${fillColor}" stroke="rgba(0,0,0,0.5)" stroke-width="0.8"/>
-          <rect x="3" y="14" width="7" height="9" rx="0.3" fill="rgba(0,0,0,0.3)"/>
-          <line x1="3" y1="16" x2="10" y2="16" stroke="rgba(255,255,255,0.3)" stroke-width="0.5"/>
-          <line x1="3" y1="18" x2="10" y2="18" stroke="rgba(255,255,255,0.3)" stroke-width="0.5"/>
-          <line x1="3" y1="20" x2="10" y2="20" stroke="rgba(255,255,255,0.3)" stroke-width="0.5"/>
-          <rect x="13" y="14" width="7" height="9" rx="0.3" fill="rgba(0,0,0,0.3)"/>
-          <line x1="13" y1="16" x2="20" y2="16" stroke="rgba(255,255,255,0.3)" stroke-width="0.5"/>
-          <line x1="13" y1="18" x2="20" y2="18" stroke="rgba(255,255,255,0.3)" stroke-width="0.5"/>
-          <line x1="13" y1="20" x2="20" y2="20" stroke="rgba(255,255,255,0.3)" stroke-width="0.5"/>
-        </svg>`,
+            html: `<svg viewBox="0 0 24 24" width="${pinW}" height="${pinH}" xmlns="http://www.w3.org/2000/svg" opacity="${aeroFilteredOut ? 0.15 : 1}" style="filter: drop-shadow(0px 3px 4px rgba(0,0,0,0.6));">
+            <path fill="${fillColor}" d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z"/>
+            <path fill="white" d="M15.5 10.5l-3-2V5.25a.75.75 0 0 0-1.5 0V8.5l-3 2v.75l3-1v2.25l-1 .75v.5l1.75-.5 1.75.5v-.5l-1-.75v-2.25l3 1v-.75z"/>
+            </svg>`,
             className: "bg-transparent border-none",
             iconSize: [pinW, pinH],
             iconAnchor: [pinW / 2, pinH],
