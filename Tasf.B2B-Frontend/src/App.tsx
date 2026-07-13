@@ -206,13 +206,14 @@ function AeroSelect({ value, onChange, opciones, placeholder }: {
   );
 }
 
-function DrawerVuelos({ resultado, minutosVirtualesTotales, fechaInicio, onSeleccionar, onCerrar, vueloExpandir, onFiltrados, vuelosCancelados, onCancelarVuelo }: {
+function DrawerVuelos({ resultado, minutosVirtualesTotales, fechaInicio, onSeleccionar, onCerrar, vueloExpandir, onFiltrados, vuelosCancelados, onCancelarVuelo, onSeleccionarCancelado }: {
   resultado: any; minutosVirtualesTotales: number; fechaInicio: string;
   onSeleccionar: (key: string) => void; onCerrar: () => void;
   vueloExpandir?: string | null;
   onFiltrados?: (keys: string[] | null) => void;
   vuelosCancelados?: Set<string>;
   onCancelarVuelo?: (claveVuelo: string) => void;
+  onSeleccionarCancelado?: (clave: string) => void;
 }) {
   const [tabVuelos, setTabVuelos] = useState<'vuelo'|'espera'|'cancelados'>('vuelo');
   const [orden, setOrden] = useState<{ col: 'cant'|'cap'|'pct'|'envios'|'minSalida'|'minLlegada'|'origen'|'destino'; dir: 1|-1 }>({ col: 'minSalida', dir: 1 });
@@ -634,7 +635,7 @@ function DrawerVuelos({ resultado, minutosVirtualesTotales, fechaInicio, onSelec
                 : 'No hay vuelos cancelados'}
             </p>
           ) : canceladosVisibles.map(v => (
-            <div key={v.clave} className="flex items-center justify-between bg-red-500/10 border border-red-500/20 rounded-lg px-4 py-3">
+            <div key={v.clave} onClick={() => onSeleccionarCancelado?.(v.clave)} className="flex items-center justify-between bg-red-500/10 border border-red-500/20 rounded-lg px-4 py-3 cursor-pointer hover:bg-orange-500/15 hover:border-orange-500/30 transition-colors">
               <div className="flex items-center gap-3">
                 <span className="w-2 h-2 rounded-full bg-red-400 shrink-0" />
                 <div>
@@ -1693,6 +1694,7 @@ function App() {
   const [horaVirtualMinutos, setHoraVirtualMinutos] = useState(0);
   const [minutosVirtualesTotales, setMinutosVirtualesTotales] = useState(0);
   const [vueloResaltado, setVueloResaltado] = useState<string | null>(null);
+  const [canceladoResaltado, setCanceladoResaltado] = useState<string | null>(null);
   const [rutaEnvioSeleccionada, setRutaEnvioSeleccionada] = useState<string | null>(null);
   const horaVirtualBaseRef = useRef<{ minutos: number; realMs: number } | null>(null);
   const ultimaVentanaRef = useRef<string | null>(null);
@@ -2434,7 +2436,8 @@ function App() {
                 aeropuertosFiltrados={vistaActiva === "mapa" && panelAlmacenesAbierto ? aeropuertosFiltrados : null}
                 vuelosFiltrados={vistaActiva === "mapa" && panelVuelosAbierto ? vuelosFiltrados : null}
                 vuelosCancelados={vuelosCancelados} mostrarVuelosCancelados={mostrarVuelosCancelados}
-                onToggleCancelados={() => setMostrarVuelosCancelados(v => !v)} />
+                onToggleCancelados={() => setMostrarVuelosCancelados(v => !v)}
+                canceladoResaltado={canceladoResaltado} onCanceladoResaltadoClear={() => setCanceladoResaltado(null)} />
 
 
               {/* Toast cancelación */}
@@ -2523,6 +2526,7 @@ function App() {
                         alert('No se pudo cancelar el vuelo.');
                       }
                     } : undefined}
+                    onSeleccionarCancelado={(clave) => { setCanceladoResaltado(clave); setMostrarVuelosCancelados(true); }}
                   />
                 )}
               </div>

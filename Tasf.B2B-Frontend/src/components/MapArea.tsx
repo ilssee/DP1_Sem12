@@ -32,6 +32,8 @@ interface MapAreaProps {
   vuelosCancelados?: Set<string>;
   mostrarVuelosCancelados?: boolean;
   onToggleCancelados?: () => void;
+  canceladoResaltado?: string | null;
+  onCanceladoResaltadoClear?: () => void;
 }
 
 function EventosMapa({ alHacerClic }: { alHacerClic: () => void }) {
@@ -97,6 +99,19 @@ function VolarAAvion({
   return null;
 }
 
+function VolarACancelado({ clave, posicion }: { clave: string | null | undefined; posicion: [number, number] | null }) {
+  const map = useMap();
+  const prev = useRef<string | null>(null);
+  useEffect(() => {
+    if (clave && posicion && clave !== prev.current) {
+      prev.current = clave;
+      map.flyTo(posicion, Math.max(map.getZoom(), 5), { duration: 1.2 });
+    }
+    if (!clave) prev.current = null;
+  }, [clave, posicion]);
+  return null;
+}
+
 const calcularRumbo = (
   lat1: number,
   lng1: number,
@@ -126,13 +141,12 @@ const getPlaneIcon = (
   if (cacheIconos[key]) return cacheIconos[key];
   const size = isSelected ? 36 : 24;
   const opacity = isDimmed ? 0.2 : 1;
-  const shadow = isSelected
-    ? `drop-shadow(0px 0px 10px ${color})`
-    : "drop-shadow(0px 0px 2px rgba(0,0,0,0.8))";
+  const planePath = "M21,16V14L13,9V3.5A1.5,1.5 0 0,0 11.5,2A1.5,1.5 0 0,0 10,3.5V9L2,14V16L10,13.5V19L8,20.5V22L11.5,21L15,22V20.5L13,19V13.5L21,16Z";
+  const glow = isSelected ? `drop-shadow(0 0 6px ${color})` : "";
   const icon = new L.DivIcon({
-    html: `<div style="opacity: ${opacity}; transition: opacity 0.3s ease;">
-             <svg viewBox="0 0 24 24" fill="${color}" width="${size}" height="${size}" style="transform: rotate(${rumbo}deg); filter: ${shadow};">
-               <path d="M21,16V14L13,9V3.5A1.5,1.5 0 0,0 11.5,2A1.5,1.5 0 0,0 10,3.5V9L2,14V16L10,13.5V19L8,20.5V22L11.5,21L15,22V20.5L13,19V13.5L21,16Z" />
+    html: `<div style="opacity:${opacity};transition:opacity 0.3s ease;">
+             <svg viewBox="0 0 24 24" width="${size}px" height="${size}px" style="transform:rotate(${rumbo}deg);filter:${glow};display:block;">
+               <path d="${planePath}" fill="${color}"/>
              </svg>
            </div>`,
     className: "bg-transparent border-none",
@@ -195,6 +209,8 @@ export default function MapArea({
   vuelosCancelados,
   mostrarVuelosCancelados = false,
   onToggleCancelados,
+  canceladoResaltado,
+  onCanceladoResaltadoClear,
 }: MapAreaProps) {
   const [vueloSeleccionado, setVueloSeleccionado] = useState<string | null>(
     null,
@@ -276,9 +292,9 @@ export default function MapArea({
       if (!horaLlegada) return; // sin datos de llegada: no renderizar
       const cap = solucion.capacidadesVuelos?.[claveRuta] ?? 350;
       const pct = cap > 0 ? (cantidad / cap) * 100 : 0;
-      let color = "#64748b"; // gris = sin maletas
+      let color = "#94a3b8"; // gris = sin maletas
       if (cantidad > 0) {
-        color = pct >= 80 ? "#E32929" : pct >= 50 ? "#FFB800" : "#178D47";
+        color = pct >= 80 ? "#f87171" : pct >= 50 ? "#fbbf24" : "#4ade80";
       }
 
       resultado.push({
@@ -596,7 +612,7 @@ export default function MapArea({
           positions={[inicio, destino]}
           color={vuelo.color}
           weight={esSeleccionado ? 2 : 1.4}
-          opacity={esSeleccionado ? 0.75 : 0.35}
+          opacity={vueloSeleccionado !== null || rutaEnvioSeleccionada !== null ? (esSeleccionado ? 0.85 : 0.12) : 0.75}
           dashArray={esSeleccionado ? "6 4" : "4 6"}
         />,
       );
@@ -638,6 +654,12 @@ export default function MapArea({
       return [{ clave, ruta, origen, destino, horaSalida, horaLlegada, fecha, lat, lng, rumbo, coordO, coordD }];
     });
   }, [vuelosCancelados, solucion, minutosVirtualesTotales, horaVirtualMinutos, fechaInicioSim]);
+
+  const posicionCanceladoResaltado = useMemo<[number, number] | null>(() => {
+    if (!canceladoResaltado) return null;
+    const v = canceladosActivos.find(c => c.clave === canceladoResaltado);
+    return v ? [v.lat, v.lng] : null;
+  }, [canceladoResaltado, canceladosActivos]);
 
   return (
     <div style={{ position: "relative", height: "100%", width: "100%" }}>
@@ -842,7 +864,7 @@ export default function MapArea({
                 background: "#fb923c",
               }}
             />
-            {mostrarVuelosCancelados ? "Ocultar cancelados" : "Mostrar cancelados"} ({vuelosCancelados.size})
+            {mostrarVuelosCancelados ? "Ocultar cancelados" : "Mostrar cancelados"} ({canceladosActivos.length})
           </button>
         )}
       </div>
@@ -881,6 +903,7 @@ export default function MapArea({
           vueloId={vueloSeleccionado ?? elementosMapa.idVueloEnfocado}
         />
         <VolarAAeropuerto codigo={aeropuertoResaltado} />
+        <VolarACancelado clave={canceladoResaltado} posicion={posicionCanceladoResaltado} />
 
         {/* Pins de aeropuertos con ocupación en tiempo real */}
         {Object.entries(aeropuertosDB).map(([codigo, coord]) => {
