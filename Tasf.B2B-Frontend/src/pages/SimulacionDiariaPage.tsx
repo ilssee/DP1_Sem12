@@ -344,19 +344,6 @@ export default function SimulacionDiariaPage({
   return (
     // 3. CAMBIO DE CLASES RAÍZ: Se reemplaza h-screen por h-full flex-1 para evitar el desbordamiento
     <div className="h-full flex-1 min-h-0 flex flex-col relative font-sans bg-slate-950">
-      <div className="bg-slate-900 border-b border-slate-800 px-6 py-4 shadow-sm relative z-[1000]">
-        <div className="flex items-center gap-3">
-          <Calendar className="text-tasf-green" size={22} />
-          <div>
-            <h2 className="text-lg font-bold text-white">
-              Operaciones Día a Día
-            </h2>
-            <p className="text-sm text-slate-400">
-              Registro en vivo de envíos manuales y monitoreo logístico.
-            </p>
-          </div>
-        </div>
-      </div>
       <div className="flex-1 overflow-hidden min-h-0 flex gap-0">
         {/* Mapa */}
         <section className="relative flex-1 min-w-0 overflow-hidden">

@@ -2070,7 +2070,7 @@ function App() {
             onClick={() => setVistaActiva("dia-a-dia")}
             className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-colors ${vistaActiva === "dia-a-dia" ? "bg-tasf-green text-white" : "text-slate-400 hover:bg-slate-800 hover:text-white"}`}
           >
-            <Activity size={18} /> Monitoreo en Vivo
+            <Activity size={18} /> Simulación día a día
           </button>
           <button
             onClick={() => setVistaActiva("mapa")}
