@@ -1527,7 +1527,7 @@ function ReportePeriodo({ resultado, fechaInicio, dias, onCerrar }: {
 
 function App() {
   const [vistaActiva, setVistaActiva] = useState<Vista>("dia-a-dia");
-
+  const [headerColapsado, setHeaderColapsado] = useState(false);
   const [fechaInicio, setFechaInicio] = useState("2026-01-05");
   const [horaInicio, setHoraInicio] = useState("00:00");
   const [dias, setDias] = useState(5);
@@ -2057,57 +2057,69 @@ function App() {
   };
 
   return (
-    <div className="flex flex-col h-screen w-full bg-tasf-gray overflow-hidden font-sans">
+    <div className="flex flex-col h-screen w-full bg-tasf-gray overflow-hidden font-sans relative">
       {/* ── BARRA DE NAVEGACIÓN SUPERIOR (TOP NAVBAR) ── */}
-      <header className="bg-tasf-dark text-white flex items-center justify-between px-6 py-4 shadow-md z-40">
-        <div className="flex items-center gap-3">
-          <Plane className="text-tasf-green" size={28} />
-          <h1 className="text-xl font-bold tracking-wider">Tasf.B2B</h1>
-        </div>
+      {/* Botón flotante para colapsar/expandir el Header */}
+      <button
+        onClick={() => setHeaderColapsado(!headerColapsado)}
+        className={`absolute left-1/2 -translate-x-1/2 z-[5000] bg-slate-800 border border-slate-600 border-t-0 rounded-b-lg px-6 py-0 text-slate-400 hover:text-white hover:bg-slate-700 transition-all duration-300 shadow-md ${headerColapsado ? "top-0" : "top-[72px]"}`}
+        title={headerColapsado ? "Expandir menú superior" : "Colapsar menú superior"}
+      >
+        <span className="text-[10px]">{headerColapsado ? "▼" : "▲"}</span>
+      </button>
 
-        <nav className="flex gap-2 items-center">
-          <button
-            onClick={() => setVistaActiva("dia-a-dia")}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-colors ${vistaActiva === "dia-a-dia" ? "bg-tasf-green text-white" : "text-slate-400 hover:bg-slate-800 hover:text-white"}`}
-          >
-            <Activity size={18} /> Simulación día a día
-          </button>
-          <button
-            onClick={() => setVistaActiva("mapa")}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-colors ${vistaActiva === "mapa" ? "bg-tasf-green text-white" : "text-slate-400 hover:bg-slate-800 hover:text-white"}`}
-          >
-            <Calendar size={18} /> Simulación por periodo
-          </button>
-          <button
-            onClick={() => setVistaActiva("colapso")}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-colors ${vistaActiva === "colapso" ? "bg-tasf-green text-white" : "text-slate-400 hover:bg-slate-800 hover:text-white"}`}
-          >
-            <OctagonAlert size={18}/> Simulación hasta colapso
-          </button>
-          <button
-            onClick={() => setVistaActiva("cargar")}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-colors ${vistaActiva === "cargar" ? "bg-tasf-green text-white" : "text-slate-400 hover:bg-slate-800 hover:text-white"}`}
-          >
-            <FileText size={18} /> Carga de Datos
-          </button>
-          {reporteGuardado && (
+      {/* ── BARRA DE NAVEGACIÓN SUPERIOR (TOP NAVBAR) ── */}
+      <div className={`bg-tasf-dark transition-all duration-300 z-40 shrink-0 overflow-hidden ${headerColapsado ? "h-0" : "h-[72px]"}`}>
+        <header className="h-[72px] text-white flex items-center justify-between px-6 shadow-md w-full min-w-max">
+          <div className="flex items-center gap-3">
+            <Plane className="text-tasf-green" size={28} />
+            <h1 className="text-xl font-bold tracking-wider">Tasf.B2B</h1>
+          </div>
+
+          <nav className="flex gap-2 items-center">
             <button
-              onClick={() => setMostrarReporte(true)}
-              className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-colors text-slate-400 hover:bg-slate-800 hover:text-white"
-              title="Ver último reporte guardado"
+              onClick={() => setVistaActiva("dia-a-dia")}
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-colors ${vistaActiva === "dia-a-dia" ? "bg-tasf-green text-white" : "text-slate-400 hover:bg-slate-800 hover:text-white"}`}
             >
-              <FileText size={18} /> Último reporte
+              <Activity size={18} /> Simulación día a día
             </button>
-          )}
-          <button
-            onClick={() => setModoOscuro(!modoOscuro)}
-            className="ml-2 px-3 py-2 rounded-lg text-sm transition-colors text-slate-400 hover:bg-slate-800 hover:text-white"
-            title={modoOscuro ? "Cambiar a mapa claro" : "Cambiar a mapa oscuro"}
-          >
-            {modoOscuro ? "☀️" : "🌙"}
-          </button>
-        </nav>
-      </header>
+            <button
+              onClick={() => setVistaActiva("mapa")}
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-colors ${vistaActiva === "mapa" ? "bg-tasf-green text-white" : "text-slate-400 hover:bg-slate-800 hover:text-white"}`}
+            >
+              <Calendar size={18} /> Simulación por periodo
+            </button>
+            <button
+              onClick={() => setVistaActiva("colapso")}
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-colors ${vistaActiva === "colapso" ? "bg-tasf-green text-white" : "text-slate-400 hover:bg-slate-800 hover:text-white"}`}
+            >
+              <OctagonAlert size={18}/> Simulación hasta colapso
+            </button>
+            <button
+              onClick={() => setVistaActiva("cargar")}
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-colors ${vistaActiva === "cargar" ? "bg-tasf-green text-white" : "text-slate-400 hover:bg-slate-800 hover:text-white"}`}
+            >
+              <FileText size={18} /> Carga de Datos
+            </button>
+            {reporteGuardado && (
+              <button
+                onClick={() => setMostrarReporte(true)}
+                className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-colors text-slate-400 hover:bg-slate-800 hover:text-white"
+                title="Ver último reporte guardado"
+              >
+                <FileText size={18} /> Último reporte
+              </button>
+            )}
+            <button
+              onClick={() => setModoOscuro(!modoOscuro)}
+              className="ml-2 px-3 py-2 rounded-lg text-sm transition-colors text-slate-400 hover:bg-slate-800 hover:text-white"
+              title={modoOscuro ? "Cambiar a mapa claro" : "Cambiar a mapa oscuro"}
+            >
+              {modoOscuro ? "☀️" : "🌙"}
+            </button>
+          </nav>
+        </header>
+      </div>
 
       {/* ── ÁREA PRINCIPAL ── */}
       <div className="flex-1 flex overflow-hidden relative">
