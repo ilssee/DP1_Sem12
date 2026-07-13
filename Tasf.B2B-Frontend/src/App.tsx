@@ -811,12 +811,13 @@ function DrawerAlmacenes({ resultado, minutosVirtualesTotales, fechaInicioSim, o
   );
 }
 
-function DrawerEnvios({ resultado, minutosVirtualesTotales, fechaInicioSim, onCerrar, onVerVuelo, onVerAlmacen, onEnfocarVuelo, onEnfocarAlmacen }: {
+function DrawerEnvios({ resultado, minutosVirtualesTotales, fechaInicioSim, onCerrar, onVerVuelo, onVerAlmacen, onEnfocarVuelo, onEnfocarAlmacen, onVerRutaEnvio }: {
   resultado: any; minutosVirtualesTotales: number; fechaInicioSim: string; onCerrar: () => void;
   onVerVuelo?: (key: string) => void;
   onVerAlmacen?: (codigo: string) => void;
   onEnfocarVuelo?: (key: string) => void;
   onEnfocarAlmacen?: (codigo: string) => void;
+  onVerRutaEnvio?: (id: string) => void;
 }) {
   type Col = 'id'|'idCliente'|'vuelo'|'maletas'|'origen'|'destino';
   type Tab = 'vuelo'|'espera'|'completado'|'replanificado';
@@ -1091,15 +1092,22 @@ function DrawerEnvios({ resultado, minutosVirtualesTotales, fechaInicioSim, onCe
                 <td className="px-2 py-2 font-bold">{e.origen}</td>
                 <td className="px-2 py-2 font-bold">{e.destino}</td>
                 <td className="px-2 py-2 text-center">
+                  {onVerRutaEnvio && (
+                    <button onClick={(event) => { event.stopPropagation(); onVerRutaEnvio(e.id); }}
+                      title="Ver ruta completa del envío con escalas"
+                      className="text-cyan-400 hover:text-cyan-300 text-[11px] px-1.5 py-0.5 rounded bg-cyan-400/10 hover:bg-cyan-400/20 transition-colors mr-1">
+                      🧭 Ruta
+                    </button>
+                  )}
                   {tab === 'vuelo' && e.vueloKey && onVerVuelo && (
-                    <button onClick={() => onVerVuelo(e.vueloKey!)}
+                    <button onClick={(event) => { event.stopPropagation(); onVerVuelo(e.vueloKey!); }}
                       title="Ver vuelo en mapa y panel"
                       className="text-tasf-green hover:text-green-400 text-[11px] px-1.5 py-0.5 rounded bg-tasf-green/10 hover:bg-tasf-green/20 transition-colors">
                       ✈ Ver
                     </button>
                   )}
                   {(tab === 'espera' || tab === 'completado') && e.aeropuerto && onVerAlmacen && (
-                    <button onClick={() => onVerAlmacen(e.aeropuerto!)}
+                    <button onClick={(event) => { event.stopPropagation(); onVerAlmacen(e.aeropuerto!); }}
                       title="Ver almacén en mapa y panel"
                       className="text-blue-400 hover:text-blue-300 text-[11px] px-1.5 py-0.5 rounded bg-blue-400/10 hover:bg-blue-400/20 transition-colors">
                       🏭 Ver
@@ -1534,6 +1542,7 @@ function App() {
   const [horaVirtualMinutos, setHoraVirtualMinutos] = useState(0);
   const [minutosVirtualesTotales, setMinutosVirtualesTotales] = useState(0);
   const [vueloResaltado, setVueloResaltado] = useState<string | null>(null);
+  const [rutaEnvioSeleccionada, setRutaEnvioSeleccionada] = useState<string | null>(null);
   const horaVirtualBaseRef = useRef<{ minutos: number; realMs: number } | null>(null);
   const ultimaVentanaRef = useRef<string | null>(null);
   const ultimoPollRef = useRef<{ minutosTotales: number; realMs: number } | null>(null);
@@ -2304,7 +2313,7 @@ function App() {
                     onCerrar={() => setPanelEnviosAbierto(false)}
                     onEnfocarVuelo={(key) => { setVueloResaltado(key); }}
                     onEnfocarAlmacen={(cod) => { setAeropuertoResaltado(cod); }}
-                    onVerVuelo={(key) => { setVueloResaltado(key); setPanelVuelosAbierto(true); setPanelEnviosAbierto(false); setPanelAlmacenesAbierto(false); }}
+                    onVerVuelo={(key) => { setRutaEnvioSeleccionada(null); setVueloResaltado(key); setPanelVuelosAbierto(true); setPanelEnviosAbierto(false); setPanelAlmacenesAbierto(false); }}
                     onVerAlmacen={(cod) => { setAeropuertoResaltado(cod); setPanelAlmacenesAbierto(true); setPanelEnviosAbierto(false); setPanelVuelosAbierto(false); }}
                   />
                 )}
