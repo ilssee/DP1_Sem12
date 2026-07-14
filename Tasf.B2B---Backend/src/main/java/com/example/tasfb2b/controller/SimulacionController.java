@@ -7,7 +7,10 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ResponseStatusException;
 import org.springframework.scheduling.annotation.Scheduled;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.LocalTime;
+import java.time.format.DateTimeFormatter;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
@@ -59,13 +62,36 @@ public class SimulacionController {
     @PostMapping("/simulacion/{jobId}/cancelar-vuelo")
     public Map<String, Object> cancelarVuelo(
             @PathVariable String jobId,
-            @RequestParam String claveVuelo
+            @RequestParam String claveVuelo,
+            @RequestParam(required = false) String horaVirtualActual
     ) {
         JobEstado job = jobsActivos.get(jobId);
         if (job == null) throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Job no encontrado");
-        job.cancelarVuelo(claveVuelo);
-        System.out.println("✈ Vuelo cancelado en job " + jobId + ": " + claveVuelo);
-        return Map.of("cancelado", claveVuelo, "totalCancelados", job.getVuelosCancelados().size());
+
+        // Determinar qué fecha aplica la cancelación según la hora virtual actual
+        LocalDate fechaCancelacion;
+        try {
+            LocalDateTime ahoraVirtual = LocalDateTime.parse(horaVirtualActual,
+                    DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
+            // Extraer HH:MM:SS de la clave: ORIG-DEST-HH:MM:SS
+            String[] partes = claveVuelo.split("-");
+            LocalTime horaSalida = LocalTime.parse(partes[2], DateTimeFormatter.ofPattern("HH:mm:ss"));
+            LocalTime corte = horaSalida.minusMinutes(60);
+            // Si la hora virtual es anterior o igual al corte (hasta 1h antes de salida) → cancela hoy; si no → mañana
+            if (!ahoraVirtual.toLocalTime().isAfter(corte)) {
+                fechaCancelacion = ahoraVirtual.toLocalDate();
+            } else {
+                fechaCancelacion = ahoraVirtual.toLocalDate().plusDays(1);
+            }
+        } catch (Exception e) {
+            // Si no llega hora virtual o hay error, cancelar el día siguiente por seguridad
+            fechaCancelacion = LocalDate.now().plusDays(1);
+        }
+
+        String claveConFecha = claveVuelo + "_" + fechaCancelacion;
+        job.cancelarVuelo(claveConFecha);
+        System.out.println("✈ Vuelo cancelado en job " + jobId + ": " + claveConFecha);
+        return Map.of("cancelado", claveConFecha, "fecha", fechaCancelacion.toString(), "totalCancelados", job.getVuelosCancelados().size());
     }
 
     // 4. ENDPOINT PARA DETENER LA SIMULACIÓN (usado por colapso)

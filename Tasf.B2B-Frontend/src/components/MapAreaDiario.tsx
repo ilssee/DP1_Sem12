@@ -22,17 +22,22 @@ function EventosMapa({ alHacerClic }: { alHacerClic: () => void }) {
   return null;
 }
 
-// Pin dinámico según modo
-const crearPinAeropuerto = (oscuro: boolean) => new L.DivIcon({
-  html: `<svg viewBox="0 0 24 24" width="18" height="26" xmlns="http://www.w3.org/2000/svg">
-    <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"
-      fill="${oscuro ? "white" : "#1e293b"}" stroke="${oscuro ? "rgba(0,0,0,0.4)" : "rgba(255,255,255,0.8)"}" stroke-width="0.5"/>
-  </svg>`,
-  className: "bg-transparent border-none",
-  iconSize: [18, 26],
-  iconAnchor: [9, 26],
-  popupAnchor: [0, -28],
-});
+// Pin dinámico de Aeropuerto (Ubicación + Avión calado)
+const crearPinAeropuerto = (oscuro: boolean) => {
+  const fillColor = oscuro ? "white" : "#1e293b";
+  const planeColor = oscuro ? "#1e293b" : "white"; // Color inverso para el avioncito
+  
+  return new L.DivIcon({
+    html: `<svg viewBox="0 0 24 24" width="24" height="24" xmlns="http://www.w3.org/2000/svg" style="filter: drop-shadow(0px 3px 4px rgba(0,0,0,0.6));">
+      <path fill="${fillColor}" d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z"/>
+      <path fill="${planeColor}" d="M15.5 10.5l-3-2V5.25a.75.75 0 0 0-1.5 0V8.5l-3 2v.75l3-1v2.25l-1 .75v.5l1.75-.5 1.75.5v-.5l-1-.75v-2.25l3 1v-.75z"/>
+    </svg>`,
+    className: "bg-transparent border-none",
+    iconSize: [24, 24],
+    iconAnchor: [12, 24], // El ancla de la punta del pin está en X=12, Y=24
+    popupAnchor: [0, -24],
+  });
+};
 
 // Memoria caché para que React no destruya los aviones al moverse
 const cacheIconos: Record<string, L.DivIcon> = {};
