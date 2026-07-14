@@ -48,7 +48,7 @@ public class AsyncSimulacionService {
 
     // Este método corre en un hilo secundario y no bloquea a Nginx
     @Async
-    public void procesarSimulacionEnFondo(String jobId, LocalDateTime inicio, int dias, JobEstado job) {
+    public void procesarSimulacionEnFondo(String jobId, LocalDateTime inicio, int dias, int saSegundos, JobEstado job) {
         try {
             job.setEstado("PROCESANDO");
 
@@ -56,7 +56,7 @@ public class AsyncSimulacionService {
             List<Vuelo> vuelos = vueloRepository.findAll();
 
             // 1. PARÁMETROS (Sa, K, Sc)
-            int Sa_minutos = 1; // Salto del algoritmo: 1 minuto real por ejecución
+            int Sa_minutos = 1; // referencia de escala (no usado directamente)
             int K;
             if (dias <= 3) K = 72;
             else if (dias <= 5) K = 120;
@@ -66,8 +66,8 @@ public class AsyncSimulacionService {
             int totalMinutosVirtuales = dias * 24 * 60;
             int totalPasos = (int) Math.ceil((double) totalMinutosVirtuales / Sc);
 
-            // 2. CONFIGURAR TIEMPO REAL (Sa = 1 minuto real por paso)
-            long sleepMillis = Sa_minutos * 60 * 1000L; // 60,000 ms = 1 minuto
+            // 2. CONFIGURAR TIEMPO REAL
+            long sleepMillis = saSegundos * 1000L;
 
             System.out.println("Iniciando Job " + jobId + " | Días: " + dias + " | Pasos: " + totalPasos + " | Sc: " + Sc + "min");
 
@@ -194,6 +194,9 @@ public class AsyncSimulacionService {
                 estadoAcumulado.getOcupacionVuelos().putAll(solucionParcial.getOcupacionVuelos());
                 estadoAcumulado.getOcupacionAeropuertos().putAll(solucionParcial.getOcupacionAeropuertos());
                 estadoAcumulado.getRutasAsignadas().putAll(solucionParcial.getRutasAsignadas());
+                // Siempre propagar el acumulado completo a solucionParcial para que el frontend no vea datos vacíos
+                solucionParcial.setOcupacionVuelos(new java.util.LinkedHashMap<>(estadoAcumulado.getOcupacionVuelos()));
+                solucionParcial.setOcupacionAeropuertos(new HashMap<>(estadoAcumulado.getOcupacionAeropuertos()));
                 // pedidosReplanificados ya se acumula en estadoAcumulado directamente
                 tAcum[paso] = System.currentTimeMillis() - t0;
 

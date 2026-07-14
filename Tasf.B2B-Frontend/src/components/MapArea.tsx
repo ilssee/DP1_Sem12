@@ -612,25 +612,15 @@ export default function MapArea({
 
       const tieneSeleccionActiva = vueloSeleccionado !== null || rutaEnvioSeleccionada !== null;
 
-      // 1. OPACIDAD: 100% para la seleccionada, súper tenue (0.08) para las demás en dimming.
-      const opacity = tieneSeleccionActiva 
-        ? (esSeleccionado ? 1.0 : 0.08) 
-        : 0.75; // Estado normal
+      const opacity = tieneSeleccionActiva ? (esSeleccionado ? 1.0 : 0.25) : 0.95;
+      const weight = tieneSeleccionActiva ? (esSeleccionado ? 5.5 : 1.5) : 3.0;
+      const dashArray = tieneSeleccionActiva ? (esSeleccionado ? undefined : "3 9") : undefined;
 
-      // 2. GROSOR: Grueso imponente (4px) para la elegida, fino (1px) para las del fondo.
-      const weight = tieneSeleccionActiva
-        ? (esSeleccionado ? 4.0 : 1.0)
-        : 1.6; // Estado normal
-
-      // 3. ESTILO DE LÍNEA: Sólida (undefined) para resaltar la seleccionada, 
-      // punteada muy espaciada ("2 8") para el fondo, y punteada estándar ("5 5") para estado normal.
-      const dashArray = tieneSeleccionActiva
-        ? (esSeleccionado ? undefined : "2 8") 
-        : "5 5";
+      const polylineKey = `route-${vuelo.id}-${esSeleccionado ? "selected" : "dimmed"}-${tieneSeleccionActiva ? "active" : "idle"}`;
 
       const elementoPolyline = (
         <Polyline
-          key={`route-${vuelo.id}`}
+          key={polylineKey}
           positions={[inicio, destino]}
           color={vuelo.color}
           weight={weight}

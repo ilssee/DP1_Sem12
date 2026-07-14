@@ -34,16 +34,17 @@ public class SimulacionController {
     @PostMapping("/simulacion/iniciar")
     public Map<String, String> iniciarSimulacion(
             @RequestParam(name = "fechaInicio") String fechaInicio,
-            @RequestParam(name = "dias") int dias
+            @RequestParam(name = "dias") int dias,
+            @RequestParam(name = "velocidad", defaultValue = "60") int velocidad
     ) {
+        int saSegundos = Math.max(15, Math.min(60, velocidad));
         LocalDateTime inicio = LocalDateTime.parse(fechaInicio);
         String jobId = UUID.randomUUID().toString();
 
         JobEstado nuevoJob = new JobEstado(jobId, "INICIADO");
         jobsActivos.put(jobId, nuevoJob);
 
-        // Dispara el hilo asíncrono y libera a Nginx inmediatamente
-        asyncService.procesarSimulacionEnFondo(jobId, inicio, dias, nuevoJob);
+        asyncService.procesarSimulacionEnFondo(jobId, inicio, dias, saSegundos, nuevoJob);
 
         return Map.of("jobId", jobId, "mensaje", "Simulación iniciada en segundo plano");
     }

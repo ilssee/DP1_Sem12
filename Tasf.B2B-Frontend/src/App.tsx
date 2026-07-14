@@ -1683,6 +1683,7 @@ function App() {
   const [fechaInicio, setFechaInicio] = useState("2026-01-05");
   const [horaInicio, setHoraInicio] = useState("00:00");
   const [dias, setDias] = useState(5);
+  const [velocidadSim, setVelocidadSim] = useState<1|2|4>(1);
   const [fechaFin, setFechaFin] = useState("");
   const [cargando, setCargando] = useState(false);
   const [resultado, setResultado] = useState<Solucion | null>(null);
@@ -2092,9 +2093,11 @@ function App() {
     ultimaVentanaRef.current = null;
 
     try {
+      const saSegundos = velocidadSim === 1 ? 60 : velocidadSim === 2 ? 30 : 15;
       const { jobId } = await iniciarSimulacionPeriodo(
         `${fechaInicio}T${horaInicio}:00`,
         dias,
+        saSegundos,
       );
 
       const inicioReal = Date.now();
@@ -2345,9 +2348,28 @@ function App() {
                   </div>
                 </div>
 
+                <div className="flex flex-col space-y-2">
+                  <label className="text-sm text-slate-300">3. VELOCIDAD</label>
+                  <div className="flex gap-2">
+                    {([1, 2, 4] as const).map(v => (
+                      <button
+                        key={v}
+                        onClick={() => setVelocidadSim(v)}
+                        disabled={cargando || simulandoEnVivo}
+                        className={`flex-1 py-2 rounded font-bold text-sm transition-colors ${velocidadSim === v ? 'bg-tasf-green text-white' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'} disabled:opacity-50`}
+                      >
+                        {v === 1 ? '🐢 1×' : v === 2 ? '🐇 2×' : '⚡ 4×'}
+                      </button>
+                    ))}
+                  </div>
+                  <p className="text-[10px] text-slate-500 text-center">
+                    {velocidadSim === 1 ? 'Normal (~60 min)' : velocidadSim === 2 ? 'Rápido (~30 min)' : 'Muy rápido (~15 min)'}
+                  </p>
+                </div>
+
                 <div className="flex flex-col">
                   <label className="text-sm text-slate-300 mb-2">
-                    3. FECHA Y HORA FIN
+                    4. FECHA Y HORA FIN
                   </label>
                   <div className="bg-slate-800 text-tasf-green p-3 rounded text-center font-mono font-bold border border-slate-700">
                     {fechaFin || "Calculando..."}
