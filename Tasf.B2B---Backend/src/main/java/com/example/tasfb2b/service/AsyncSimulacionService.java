@@ -125,6 +125,11 @@ public class AsyncSimulacionService {
                         })
                         .collect(java.util.stream.Collectors.toList());
 
+                // Precomputar prefijos sin fecha de todos los vuelos cancelados para matching independiente de fecha
+                Set<String> canceladosSinFecha = cancelados.stream()
+                    .map(c -> { int idx = c.lastIndexOf('_'); return idx >= 0 ? c.substring(0, idx) : c; })
+                    .collect(java.util.stream.Collectors.toSet());
+
                 // Detectar pedidos ya asignados que usan un vuelo cancelado → re-planificar
                 List<Pedido> pedidosAfectados = new ArrayList<>();
                 if (!cancelados.isEmpty()) {
@@ -133,8 +138,8 @@ public class AsyncSimulacionService {
                     while (it.hasNext()) {
                         Map.Entry<String, List<Vuelo>> entry = it.next();
                         boolean usaCancelado = entry.getValue().stream().anyMatch(v -> {
-                            String claveConFecha = v.getOrigen() + "-" + v.getDestino() + "-" + (v.getHoraSalida() != null ? v.getHoraSalida().format(fmtClave) : "") + "_" + fechaBloque;
-                            return cancelados.contains(claveConFecha);
+                            String claveSinFecha = v.getOrigen() + "-" + v.getDestino() + "-" + (v.getHoraSalida() != null ? v.getHoraSalida().format(fmtClave) : "");
+                            return canceladosSinFecha.contains(claveSinFecha);
                         });
                         if (usaCancelado) {
                             Pedido pedidoOriginal = todosPedidosProcesados.get(entry.getKey());
