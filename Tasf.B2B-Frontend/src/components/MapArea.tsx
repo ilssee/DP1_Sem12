@@ -437,9 +437,12 @@ export default function MapArea({
       );
 
       const isSelected = vueloSeleccionado === vuelo.id;
-      const isRouteSegment =
+      const hasRutaSeleccionadaActiva =
         rutaEnvioSeleccionada !== null &&
         rutaEnvioSeleccionada !== undefined &&
+        segmentosRutaSeleccionada.idsSegmentos.size > 0;
+      const isRouteSegment =
+        hasRutaSeleccionadaActiva &&
         segmentosRutaSeleccionada.idsSegmentos.has(vuelo.id);
       const isHighlighted = isSelected || isRouteSegment;
       const filteredOut =
@@ -448,7 +451,7 @@ export default function MapArea({
         !vuelosFiltrados.includes(vuelo.id);
       const isDimmed =
         filteredOut ||
-        ((vueloSeleccionado !== null || rutaEnvioSeleccionada !== null) &&
+        ((vueloSeleccionado !== null || hasRutaSeleccionadaActiva) &&
           !isHighlighted);
 
       if (isSelected) {
