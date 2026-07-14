@@ -585,7 +585,8 @@ export default function MapArea({
     if (!mostrarRutas && !vueloSeleccionado) return [];
 
     const minutosActuales = minutosVirtualesTotales ?? horaVirtualMinutos;
-    const lineas: React.ReactElement[] = [];
+    const lineasNormales: React.ReactElement[] = [];
+    let lineaSeleccionada: React.ReactElement | null = null; // Guardar la seleccionada para pintarla al final (encima de todas)
 
     rutasVisuales.forEach((vuelo) => {
       if (!mostrarVacíos && vuelo.cantidad === 0) return;
@@ -609,19 +610,45 @@ export default function MapArea({
       const esSeleccionado = vueloSeleccionado === vuelo.id;
       if (!mostrarRutas && !esSeleccionado) return;
 
-      lineas.push(
+      const tieneSeleccionActiva = vueloSeleccionado !== null || rutaEnvioSeleccionada !== null;
+
+      // 1. OPACIDAD: 100% para la seleccionada, súper tenue (0.08) para las demás en dimming.
+      const opacity = tieneSeleccionActiva 
+        ? (esSeleccionado ? 1.0 : 0.08) 
+        : 0.75; // Estado normal
+
+      // 2. GROSOR: Grueso imponente (4px) para la elegida, fino (1px) para las del fondo.
+      const weight = tieneSeleccionActiva
+        ? (esSeleccionado ? 4.0 : 1.0)
+        : 1.6; // Estado normal
+
+      // 3. ESTILO DE LÍNEA: Sólida (undefined) para resaltar la seleccionada, 
+      // punteada muy espaciada ("2 8") para el fondo, y punteada estándar ("5 5") para estado normal.
+      const dashArray = tieneSeleccionActiva
+        ? (esSeleccionado ? undefined : "2 8") 
+        : "5 5";
+
+      const elementoPolyline = (
         <Polyline
           key={`route-${vuelo.id}`}
           positions={[inicio, destino]}
           color={vuelo.color}
-          weight={esSeleccionado ? 2 : 1.4}
-          opacity={vueloSeleccionado !== null || rutaEnvioSeleccionada !== null ? (esSeleccionado ? 0.85 : 0.12) : 0.75}
-          dashArray={esSeleccionado ? "6 4" : "4 6"}
-        />,
+          weight={weight}
+          opacity={opacity}
+          dashArray={dashArray}
+        />
       );
+
+      // Si es la seleccionada, la apartamos para que se renderice AL FINAL
+      if (esSeleccionado) {
+        lineaSeleccionada = elementoPolyline;
+      } else {
+        lineasNormales.push(elementoPolyline);
+      }
     });
 
-    return lineas;
+    // Retornamos todas las líneas normales y, si existe, la seleccionada encima del resto
+    return lineaSeleccionada ? [...lineasNormales, lineaSeleccionada] : lineasNormales;
   }, [
     mostrarRutas,
     mostrarVacíos,
