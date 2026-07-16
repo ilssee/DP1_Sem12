@@ -586,7 +586,7 @@ export default function MapArea({
 
     const minutosActuales = minutosVirtualesTotales ?? horaVirtualMinutos;
     const lineasNormales: React.ReactElement[] = [];
-    let lineaSeleccionada: React.ReactElement | null = null; // Guardar la seleccionada para pintarla al final (encima de todas)
+    let lineaSeleccionada: React.ReactElement | null = null; 
 
     rutasVisuales.forEach((vuelo) => {
       if (!mostrarVacíos && vuelo.cantidad === 0) return;
@@ -612,25 +612,30 @@ export default function MapArea({
 
       const tieneSeleccionActiva = vueloSeleccionado !== null || rutaEnvioSeleccionada !== null;
 
-      // 1. OPACIDAD: 100% para la seleccionada, súper tenue (0.08) para las demás en dimming.
+      // 1. OPACIDAD EXTREMA: Casi sólida en estado normal (0.95), total al seleccionar (1.0)
+      // y lo suficientemente visible en el fondo (0.25) para que no parezca un error de carga.
       const opacity = tieneSeleccionActiva 
-        ? (esSeleccionado ? 1.0 : 0.08) 
-        : 0.75; // Estado normal
+        ? (esSeleccionado ? 1.0 : 0.25) 
+        : 0.95; 
 
-      // 2. GROSOR: Grueso imponente (4px) para la elegida, fino (1px) para las del fondo.
+      // 2. GROSOR CON PRESENCIA: Grosor de 3.0px para que se note en cualquier monitor.
+      // Al seleccionar, la ruta elegida sube a un imponente 5.5px y las demás bajan a 1.5px.
       const weight = tieneSeleccionActiva
-        ? (esSeleccionado ? 4.0 : 1.0)
-        : 1.6; // Estado normal
+        ? (esSeleccionado ? 5.5 : 1.5)
+        : 3.0; 
 
-      // 3. ESTILO DE LÍNEA: Sólida (undefined) para resaltar la seleccionada, 
-      // punteada muy espaciada ("2 8") para el fondo, y punteada estándar ("5 5") para estado normal.
+      // 3. ADIÓS AL PUNTEADO EN ESTADO NORMAL: 
+      // Las líneas continuas (undefined) son infinitamente más nítidas.
+      // Solo dejamos punteado el fondo ("3 9") para mandar esas rutas visualmente hacia atrás.
       const dashArray = tieneSeleccionActiva
-        ? (esSeleccionado ? undefined : "2 8") 
-        : "5 5";
+        ? (esSeleccionado ? undefined : "3 9") 
+        : undefined; 
+
+      const polylineKey = `route-${vuelo.id}-${esSeleccionado ? "selected" : "dimmed"}-${tieneSeleccionActiva ? "active" : "idle"}`;
 
       const elementoPolyline = (
         <Polyline
-          key={`route-${vuelo.id}`}
+          key={polylineKey}
           positions={[inicio, destino]}
           color={vuelo.color}
           weight={weight}
@@ -639,7 +644,7 @@ export default function MapArea({
         />
       );
 
-      // Si es la seleccionada, la apartamos para que se renderice AL FINAL
+      // Guardamos la seleccionada aparte para renderizarla al final (y que quede por encima de las demás en el mapa)
       if (esSeleccionado) {
         lineaSeleccionada = elementoPolyline;
       } else {
@@ -647,7 +652,6 @@ export default function MapArea({
       }
     });
 
-    // Retornamos todas las líneas normales y, si existe, la seleccionada encima del resto
     return lineaSeleccionada ? [...lineasNormales, lineaSeleccionada] : lineasNormales;
   }, [
     mostrarRutas,
