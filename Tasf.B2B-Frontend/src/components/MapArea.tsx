@@ -411,19 +411,38 @@ export default function MapArea({
       const estado = p < 0 ? "pendiente" : p >= 1 ? "completado" : "activo";
       if (!vueloActivoId && estado === "activo") vueloActivoId = vueloVisual.id;
 
-      const opacity = estado === "activo" ? 0.95 : estado === "completado" ? 0.65 : 0.28;
-      const weight = estado === "activo" ? 2.7 : estado === "completado" ? 2.2 : 1.6;
+      const opacity = estado === "activo" ? 1.0 : estado === "completado" ? 0.5 : 0.25;
+      const weight = estado === "activo" ? 5.0 : estado === "completado" ? 2.0 : 1.5;
+      const color = estado === "activo" ? "#38bdf8" : estado === "completado" ? "#64748b" : "#94a3b8";
+      const dashArray = estado === "activo" ? undefined : "4 5";
 
-      return [
+      const elementos: React.ReactElement[] = [];
+
+      // Halo blanco detrás del tramo activo para que destaque más
+      if (estado === "activo") {
+        elementos.push(
+          <Polyline
+            key={`envio-halo-${id}`}
+            positions={[[vueloVisual.lat1, vueloVisual.lng1], [vueloVisual.lat2, vueloVisual.lng2]]}
+            color="white"
+            weight={8}
+            opacity={0.25}
+          />
+        );
+      }
+
+      elementos.push(
         <Polyline
           key={`envio-route-${id}`}
           positions={[[vueloVisual.lat1, vueloVisual.lng1], [vueloVisual.lat2, vueloVisual.lng2]]}
-          color="#38bdf8"
+          color={color}
           weight={weight}
           opacity={opacity}
-          dashArray={estado === "activo" ? "6 5" : "4 4"}
-        />,
-      ];
+          dashArray={dashArray}
+        />
+      );
+
+      return elementos;
     });
 
     return { lineas, idsSegmentos, vueloActivoId };
@@ -612,9 +631,9 @@ export default function MapArea({
 
       const tieneSeleccionActiva = vueloSeleccionado !== null || rutaEnvioSeleccionada !== null;
 
-      const opacity = tieneSeleccionActiva ? (esSeleccionado ? 1.0 : 0.25) : 0.95;
-      const weight = tieneSeleccionActiva ? (esSeleccionado ? 5.5 : 1.5) : 3.0;
-      const dashArray = tieneSeleccionActiva ? (esSeleccionado ? undefined : "3 9") : undefined;
+      const opacity = tieneSeleccionActiva ? (esSeleccionado ? 1.0 : 0.25) : 0.75;
+      const weight = tieneSeleccionActiva ? (esSeleccionado ? 5.5 : 1.5) : 1.5;
+      const dashArray = tieneSeleccionActiva ? (esSeleccionado ? undefined : "3 9") : "5 7";
 
       const polylineKey = `route-${vuelo.id}-${esSeleccionado ? "selected" : "dimmed"}-${tieneSeleccionActiva ? "active" : "idle"}`;
 
