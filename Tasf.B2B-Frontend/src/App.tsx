@@ -978,6 +978,7 @@ function DrawerEnvios({ resultado, minutosVirtualesTotales, fechaInicioSim, onCe
   const [filtrosAbiertos, setFiltrosAbiertos] = useState(false);
   const [filtroOrigen, setFiltroOrigen] = useState('');
   const [filtroDestino, setFiltroDestino] = useState('');
+  const [envioExpandido, setEnvioExpandido] = useState<string | null>(null);
   // Completados: input horas + estado aplicado
   const [horasInput, setHorasInput] = useState('4');
   const [horasAplicadas, setHorasAplicadas] = useState<number | null>(null);
@@ -993,7 +994,8 @@ function DrawerEnvios({ resultado, minutosVirtualesTotales, fechaInicioSim, onCe
       const tramos: any[] = rutasAsignadas[id] ?? [];
       const fechas: string[] = fechasTramos[id] ?? [];
       const vuelo = tramos.map(v => `${v.origen}-${v.destino}-${normH(v.horaSalida??'')}`).join(' → ') || '—';
-      return { id, idCliente: detalle.idCliente, vuelo, maletas: detalle.cantidadMaletas, origen: detalle.origen, destino: detalle.destino, tramos, fechas };
+      const escalas = Math.max(0, tramos.length - 1);
+      return { id, idCliente: detalle.idCliente, vuelo, maletas: detalle.cantidadMaletas, origen: detalle.origen, destino: detalle.destino, tramos, fechas, escalas };
     });
   }, [resultado]);
 
@@ -1036,6 +1038,9 @@ function DrawerEnvios({ resultado, minutosVirtualesTotales, fechaInicioSim, onCe
         vistos.add(id);
         const d = (detalles as any)[id];
         if (!d) return;
+        const tramosCompletos: any[] = (rutasAsignadas as any)[id] ?? [];
+        const fechasTramos = (resultado as any)?.fechasTramos ?? {};
+        const fechasCompletos: string[] = fechasTramos[id] ?? [];
         lista.push({
           id,
           idCliente: d.idCliente,
@@ -1046,6 +1051,9 @@ function DrawerEnvios({ resultado, minutosVirtualesTotales, fechaInicioSim, onCe
           vueloKey: key,
           aeropuerto: origen,
           minLlegadaFinal: 0,
+          escalas: Math.max(0, tramosCompletos.length - 1),
+          tramos: tramosCompletos,
+          fechas: fechasCompletos,
         });
       });
     });
@@ -1076,7 +1084,7 @@ function DrawerEnvios({ resultado, minutosVirtualesTotales, fechaInicioSim, onCe
       }
       if (!aeropuerto && todosCompletos) aeropuerto = tramos[tramos.length - 1]?.destino ?? null;
       const estado: Tab = todosCompletos ? 'completado' : 'espera';
-      result[estado].push({ ...item, minLlegadaFinal, vueloKey: null, aeropuerto });
+      result[estado].push({ ...item, tramos, fechas, minLlegadaFinal, vueloKey: null, aeropuerto });
     });
     // Tab replanificados: cualquier pedido (de cualquier estado) que fue afectado
     const todosEnvios = [...result.vuelo, ...result.espera, ...result.completado];
@@ -1219,6 +1227,7 @@ function DrawerEnvios({ resultado, minutosVirtualesTotales, fechaInicioSim, onCe
               <th className={thC('id')} onClick={() => tog('id')}>ID Envío{ind('id')}</th>
               <th className={thC('idCliente')} onClick={() => tog('idCliente')}>ID Cliente{ind('idCliente')}</th>
               <th className={thC('vuelo')} onClick={() => tog('vuelo')}>UT (Vuelo){ind('vuelo')}</th>
+              <th className="px-2 py-2 text-left text-slate-400">Escalas</th>
               <th className={thC('maletas')} onClick={() => tog('maletas')}>Maletas{ind('maletas')}</th>
               <th className={thC('origen')} onClick={() => tog('origen')}>Origen{ind('origen')}</th>
               <th className={thC('destino')} onClick={() => tog('destino')}>Destino{ind('destino')}</th>
@@ -1227,10 +1236,14 @@ function DrawerEnvios({ resultado, minutosVirtualesTotales, fechaInicioSim, onCe
           </thead>
           <tbody>
             {filasFiltradas.length === 0 ? (
-              <tr><td colSpan={7} className="text-center text-slate-500 py-8 italic">Sin envíos</td></tr>
-            ) : filasFiltradas.map(e => (
-              <tr key={e.id} className={`border-b border-slate-800 hover:bg-slate-800 transition-colors ${idsReplanificados.has(e.id) ? 'bg-orange-950/30' : ''}`}>
+              <tr><td colSpan={8} className="text-center text-slate-500 py-8 italic">Sin envíos</td></tr>
+            ) : filasFiltradas.map(e => {
+              const expandido = envioExpandido === e.id;
+              return (
+              <React.Fragment key={e.id}>
+              <tr onClick={() => { const nuevo = expandido ? null : e.id; setEnvioExpandido(nuevo); onVerRutaEnvio?.(nuevo ?? ''); }} className={`border-b border-slate-800 hover:bg-slate-700 transition-colors cursor-pointer ${expandido ? 'bg-slate-700/60' : ''} ${idsReplanificados.has(e.id) ? 'bg-orange-950/30' : ''}`}>
                 <td className="px-2 py-2 font-mono text-[10px] text-slate-200">
+                  <span className="mr-1 text-slate-500">{expandido ? '▾' : '▸'}</span>
                   {e.id}
                   {idsReplanificados.has(e.id) && (
                     <span className="ml-1 text-orange-400 font-bold text-[9px] bg-orange-400/10 px-1 py-0.5 rounded">↺</span>
@@ -1239,13 +1252,18 @@ function DrawerEnvios({ resultado, minutosVirtualesTotales, fechaInicioSim, onCe
                 <td className="px-2 py-2 font-mono text-[10px] text-slate-300">{e.idCliente}</td>
                 <td className="px-2 py-2 font-mono text-[10px] text-slate-300 max-w-[160px] truncate" title={e.vuelo}>{e.vuelo}</td>
                 <td className="px-2 py-2 text-center">
+                  {e.escalas === 0
+                    ? <span className="text-[10px] text-slate-500">Directo</span>
+                    : <span className="font-bold px-1.5 py-0.5 rounded text-[10px] bg-cyan-500/20 text-cyan-400">{e.escalas} escala{e.escalas > 1 ? 's' : ''}</span>}
+                </td>
+                <td className="px-2 py-2 text-center">
                   <span className={`font-bold px-1.5 py-0.5 rounded text-[10px] ${e.maletas >= 10 ? 'bg-yellow-500/20 text-yellow-400' : 'bg-tasf-green/20 text-tasf-green'}`}>{e.maletas} mal.</span>
                 </td>
                 <td className="px-2 py-2 font-bold">{e.origen}</td>
                 <td className="px-2 py-2 font-bold">{e.destino}</td>
                 <td className="px-2 py-2 text-center">
                   {onVerRutaEnvio && (
-                    <button onClick={(event) => { event.stopPropagation(); onVerRutaEnvio(e.id); }}
+                    <button onClick={(event) => { event.stopPropagation(); const nuevo = expandido ? null : e.id; setEnvioExpandido(nuevo); onVerRutaEnvio(nuevo ?? ''); }}
                       title="Ver ruta completa del envío con escalas"
                       className="text-cyan-400 hover:text-cyan-300 text-[11px] px-1.5 py-0.5 rounded bg-cyan-400/10 hover:bg-cyan-400/20 transition-colors mr-1">
                       🧭 Ruta
@@ -1267,7 +1285,47 @@ function DrawerEnvios({ resultado, minutosVirtualesTotales, fechaInicioSim, onCe
                   )}
                 </td>
               </tr>
-            ))}
+              {expandido && e.tramos && e.tramos.length > 0 && (
+                <tr className="bg-slate-900/80 border-b border-slate-700">
+                  <td colSpan={8} className="px-4 py-2">
+                    <table className="w-full text-[10px]">
+                      <thead>
+                        <tr className="text-[9px] uppercase text-slate-500 border-b border-slate-700/50">
+                          <th className="pb-1 text-left">#</th>
+                          <th className="pb-1 text-left">ID Vuelo</th>
+                          <th className="pb-1 text-left">Origen</th>
+                          <th className="pb-1 text-left">Destino</th>
+                          <th className="pb-1 text-left">Salida</th>
+                          <th className="pb-1 text-left">Llegada</th>
+                          <th className="pb-1 text-left">Fecha</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {e.tramos.map((t: any, i: number) => {
+                          const normH = (s: string) => { const p = (s ?? '').split(':'); return `${p[0].padStart(2,'0')}:${(p[1]??'00').padStart(2,'0')}`; };
+                          const idVuelo = `${t.origen}-${t.destino}-${normH(t.horaSalida ?? '')}`;
+                          const fecha = e.fechas?.[i] ?? '—';
+                          const esActual = tab === 'vuelo' && e.vuelo === idVuelo;
+                          return (
+                            <tr key={i} className={`border-b border-slate-800/50 ${esActual ? 'bg-cyan-900/30' : ''}`}>
+                              <td className="py-1 pr-2 text-slate-500">{i + 1}</td>
+                              <td className="py-1 pr-3 font-mono text-cyan-300">{idVuelo}</td>
+                              <td className="py-1 pr-3 font-bold text-white">{t.origen}</td>
+                              <td className="py-1 pr-3 font-bold text-white">{t.destino}</td>
+                              <td className="py-1 pr-3 font-mono text-tasf-green">{normH(t.horaSalida ?? '')}</td>
+                              <td className="py-1 pr-3 font-mono text-slate-300">{normH(t.horaLlegada ?? '')}</td>
+                              <td className="py-1 text-slate-400">{fecha}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </td>
+                </tr>
+              )}
+              </React.Fragment>
+              );
+            })}
           </tbody>
         </table>
         )}
@@ -2459,7 +2517,8 @@ function App() {
                 vuelosFiltrados={vistaActiva === "mapa" && panelVuelosAbierto ? vuelosFiltrados : null}
                 vuelosCancelados={vuelosCancelados} mostrarVuelosCancelados={mostrarVuelosCancelados}
                 onToggleCancelados={() => setMostrarVuelosCancelados(v => !v)}
-                canceladoResaltado={canceladoResaltado} onCanceladoResaltadoClear={() => setCanceladoResaltado(null)} />
+                canceladoResaltado={canceladoResaltado} onCanceladoResaltadoClear={() => setCanceladoResaltado(null)}
+                rutaEnvioSeleccionada={rutaEnvioSeleccionada} onRutaEnvioSeleccionadaClear={() => setRutaEnvioSeleccionada(null)} />
 
 
               {/* Toast cancelación */}
@@ -2512,6 +2571,7 @@ function App() {
                     onEnfocarAlmacen={(cod) => { setAeropuertoResaltado(cod); }}
                     onVerVuelo={(key) => { setRutaEnvioSeleccionada(null); setVueloResaltado(key); setPanelVuelosAbierto(true); setPanelEnviosAbierto(false); setPanelAlmacenesAbierto(false); }}
                     onVerAlmacen={(cod) => { setAeropuertoResaltado(cod); setPanelAlmacenesAbierto(true); setPanelEnviosAbierto(false); setPanelVuelosAbierto(false); }}
+                    onVerRutaEnvio={(id) => setRutaEnvioSeleccionada(prev => prev === id ? null : id)}
                   />
                 )}
               </div>
