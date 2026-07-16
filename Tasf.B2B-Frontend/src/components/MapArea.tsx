@@ -612,24 +612,9 @@ export default function MapArea({
 
       const tieneSeleccionActiva = vueloSeleccionado !== null || rutaEnvioSeleccionada !== null;
 
-      // 1. OPACIDAD EXTREMA: Casi sólida en estado normal (0.95), total al seleccionar (1.0)
-      // y lo suficientemente visible en el fondo (0.25) para que no parezca un error de carga.
-      const opacity = tieneSeleccionActiva 
-        ? (esSeleccionado ? 1.0 : 0.25) 
-        : 0.95; 
-
-      // 2. GROSOR CON PRESENCIA: Grosor de 3.0px para que se note en cualquier monitor.
-      // Al seleccionar, la ruta elegida sube a un imponente 5.5px y las demás bajan a 1.5px.
-      const weight = tieneSeleccionActiva
-        ? (esSeleccionado ? 5.5 : 1.5)
-        : 3.0; 
-
-      // 3. ADIÓS AL PUNTEADO EN ESTADO NORMAL: 
-      // Las líneas continuas (undefined) son infinitamente más nítidas.
-      // Solo dejamos punteado el fondo ("3 9") para mandar esas rutas visualmente hacia atrás.
-      const dashArray = tieneSeleccionActiva
-        ? (esSeleccionado ? undefined : "3 9") 
-        : undefined; 
+      const opacity = tieneSeleccionActiva ? (esSeleccionado ? 1.0 : 0.25) : 0.95;
+      const weight = tieneSeleccionActiva ? (esSeleccionado ? 5.5 : 1.5) : 3.0;
+      const dashArray = tieneSeleccionActiva ? (esSeleccionado ? undefined : "3 9") : undefined;
 
       const polylineKey = `route-${vuelo.id}-${esSeleccionado ? "selected" : "dimmed"}-${tieneSeleccionActiva ? "active" : "idle"}`;
 

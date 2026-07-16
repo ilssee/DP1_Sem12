@@ -22,17 +22,14 @@ export interface JobEstado {
 export const iniciarSimulacionPeriodo = async (
   fechaInicio: string,
   dias: number,
+  velocidad: number = 60,
 ): Promise<IniciarJobResponse> => {
   try {
-    // Nota: El backend espera un POST para iniciar
     const response = await axios.post<IniciarJobResponse>(
       `${API_BASE_URL}/simulacion/iniciar`,
-      null, // No hay body, los datos van por params
+      null,
       {
-        params: {
-          fechaInicio: fechaInicio,
-          dias: dias,
-        },
+        params: { fechaInicio, dias, velocidad },
       }
     );
     return response.data;

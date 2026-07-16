@@ -48,7 +48,7 @@ public class AsyncSimulacionService {
 
     // Este método corre en un hilo secundario y no bloquea a Nginx
     @Async
-    public void procesarSimulacionEnFondo(String jobId, LocalDateTime inicio, int dias, JobEstado job) {
+    public void procesarSimulacionEnFondo(String jobId, LocalDateTime inicio, int dias, int saSegundos, JobEstado job) {
         try {
             job.setEstado("PROCESANDO");
 
@@ -56,7 +56,7 @@ public class AsyncSimulacionService {
             List<Vuelo> vuelos = vueloRepository.findAll();
 
             // 1. PARÁMETROS (Sa, K, Sc)
-            int Sa_minutos = 1; // Salto del algoritmo: 1 minuto real por ejecución
+            int Sa_minutos = 1; // referencia de escala (no usado directamente)
             int K;
             if (dias <= 3) K = 72;
             else if (dias <= 5) K = 120;
@@ -66,8 +66,8 @@ public class AsyncSimulacionService {
             int totalMinutosVirtuales = dias * 24 * 60;
             int totalPasos = (int) Math.ceil((double) totalMinutosVirtuales / Sc);
 
-            // 2. CONFIGURAR TIEMPO REAL (Sa = 1 minuto real por paso)
-            long sleepMillis = Sa_minutos * 60 * 1000L; // 60,000 ms = 1 minuto
+            // 2. CONFIGURAR TIEMPO REAL
+            long sleepMillis = saSegundos * 1000L;
 
             System.out.println("Iniciando Job " + jobId + " | Días: " + dias + " | Pasos: " + totalPasos + " | Sc: " + Sc + "min");
 
@@ -125,6 +125,11 @@ public class AsyncSimulacionService {
                         })
                         .collect(java.util.stream.Collectors.toList());
 
+                // Precomputar prefijos sin fecha de todos los vuelos cancelados para matching independiente de fecha
+                Set<String> canceladosSinFecha = cancelados.stream()
+                    .map(c -> { int idx = c.lastIndexOf('_'); return idx >= 0 ? c.substring(0, idx) : c; })
+                    .collect(java.util.stream.Collectors.toSet());
+
                 // Detectar pedidos ya asignados que usan un vuelo cancelado → re-planificar
                 List<Pedido> pedidosAfectados = new ArrayList<>();
                 if (!cancelados.isEmpty()) {
@@ -133,8 +138,8 @@ public class AsyncSimulacionService {
                     while (it.hasNext()) {
                         Map.Entry<String, List<Vuelo>> entry = it.next();
                         boolean usaCancelado = entry.getValue().stream().anyMatch(v -> {
-                            String claveConFecha = v.getOrigen() + "-" + v.getDestino() + "-" + (v.getHoraSalida() != null ? v.getHoraSalida().format(fmtClave) : "") + "_" + fechaBloque;
-                            return cancelados.contains(claveConFecha);
+                            String claveSinFecha = v.getOrigen() + "-" + v.getDestino() + "-" + (v.getHoraSalida() != null ? v.getHoraSalida().format(fmtClave) : "");
+                            return canceladosSinFecha.contains(claveSinFecha);
                         });
                         if (usaCancelado) {
                             Pedido pedidoOriginal = todosPedidosProcesados.get(entry.getKey());
@@ -194,6 +199,9 @@ public class AsyncSimulacionService {
                 estadoAcumulado.getOcupacionVuelos().putAll(solucionParcial.getOcupacionVuelos());
                 estadoAcumulado.getOcupacionAeropuertos().putAll(solucionParcial.getOcupacionAeropuertos());
                 estadoAcumulado.getRutasAsignadas().putAll(solucionParcial.getRutasAsignadas());
+                // Siempre propagar el acumulado completo a solucionParcial para que el frontend no vea datos vacíos
+                solucionParcial.setOcupacionVuelos(new java.util.LinkedHashMap<>(estadoAcumulado.getOcupacionVuelos()));
+                solucionParcial.setOcupacionAeropuertos(new HashMap<>(estadoAcumulado.getOcupacionAeropuertos()));
                 // pedidosReplanificados ya se acumula en estadoAcumulado directamente
                 tAcum[paso] = System.currentTimeMillis() - t0;
 
