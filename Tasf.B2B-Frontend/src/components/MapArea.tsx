@@ -394,36 +394,46 @@ export default function MapArea({
     let vueloActivoId: string | null = null;
     const lineas = tramos.flatMap((tramo: any, index: number) => {
       const fecha = fechas[index];
-      const id = fecha
-        ? `${tramo.origen}-${tramo.destino}-${normalizarHora(tramo.horaSalida ?? "")}_${fecha}`
-        : `${tramo.origen}-${tramo.destino}-${normalizarHora(tramo.horaSalida ?? "")}`;
-      const vueloVisual = rutasVisuales.find((v) => v.id === id);
-      if (!vueloVisual) return [];
+      const horaTramo = normalizarHora(tramo.horaSalida ?? "");
+      const vueloVisual = rutasVisuales.find(
+        (v) =>
+          v.origen === tramo.origen &&
+          v.destino === tramo.destino &&
+          v.fechaSalida === fecha &&
+          normalizarHora(v.horaSalida) === horaTramo,
+      );
 
-      idsSegmentos.add(vueloVisual.id);
+      const coordOrigen = aeropuertosDB[tramo.origen];
+      const coordDestino = aeropuertosDB[tramo.destino];
+      if (!coordOrigen || !coordDestino) return [];
+
+      const id = fecha
+        ? `${tramo.origen}-${tramo.destino}-${horaTramo}_${fecha}`
+        : `${tramo.origen}-${tramo.destino}-${horaTramo}`;
+      const key = vueloVisual?.id ?? id;
+      idsSegmentos.add(key);
       const p = calcularProgresoTotal(
-        vueloVisual.fechaSalida,
-        vueloVisual.horaSalida,
-        vueloVisual.horaLlegada,
+        fecha ?? "",
+        tramo.horaSalida ?? "",
+        tramo.horaLlegada ?? "",
         fechaInicioSim,
         minutosActuales,
       );
       const estado = p < 0 ? "pendiente" : p >= 1 ? "completado" : "activo";
-      if (!vueloActivoId && estado === "activo") vueloActivoId = vueloVisual.id;
+      if (!vueloActivoId && estado === "activo") vueloActivoId = key;
 
-      const opacity = estado === "activo" ? 1.0 : estado === "completado" ? 0.5 : 0.25;
-      const weight = estado === "activo" ? 5.0 : estado === "completado" ? 2.0 : 1.5;
+      const opacity = estado === "activo" ? 1.0 : estado === "completado" ? 0.7 : 0.35;
+      const weight = estado === "activo" ? 5.0 : estado === "completado" ? 3.0 : 1.8;
       const color = estado === "activo" ? "#38bdf8" : estado === "completado" ? "#64748b" : "#94a3b8";
       const dashArray = estado === "activo" ? undefined : "4 5";
 
       const elementos: React.ReactElement[] = [];
 
-      // Halo blanco detrás del tramo activo para que destaque más
       if (estado === "activo") {
         elementos.push(
           <Polyline
-            key={`envio-halo-${id}`}
-            positions={[[vueloVisual.lat1, vueloVisual.lng1], [vueloVisual.lat2, vueloVisual.lng2]]}
+            key={`envio-halo-${key}`}
+            positions={[[coordOrigen.lat, coordOrigen.lng], [coordDestino.lat, coordDestino.lng]]}
             color="white"
             weight={8}
             opacity={0.25}
@@ -433,8 +443,8 @@ export default function MapArea({
 
       elementos.push(
         <Polyline
-          key={`envio-route-${id}`}
-          positions={[[vueloVisual.lat1, vueloVisual.lng1], [vueloVisual.lat2, vueloVisual.lng2]]}
+          key={`envio-route-${key}`}
+          positions={[[coordOrigen.lat, coordOrigen.lng], [coordDestino.lat, coordDestino.lng]]}
           color={color}
           weight={weight}
           opacity={opacity}

@@ -1244,7 +1244,18 @@ function DrawerEnvios({ resultado, minutosVirtualesTotales, fechaInicioSim, onCe
               <tr onClick={() => { const nuevo = expandido ? null : e.id; setEnvioExpandido(nuevo); onVerRutaEnvio?.(nuevo ?? ''); }} className={`border-b border-slate-800 hover:bg-slate-700 transition-colors cursor-pointer ${expandido ? 'bg-slate-700/60' : ''} ${idsReplanificados.has(e.id) ? 'bg-orange-950/30' : ''}`}>
                 <td className="px-2 py-2 font-mono text-[10px] text-slate-200">
                   <span className="mr-1 text-slate-500">{expandido ? '▾' : '▸'}</span>
-                  {e.id}
+                  <button
+                    type="button"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      const nuevo = expandido ? null : e.id;
+                      setEnvioExpandido(nuevo);
+                      onVerRutaEnvio?.(nuevo ?? '');
+                    }}
+                    className="hover:text-cyan-300 transition-colors underline-offset-2 hover:underline"
+                  >
+                    {e.id}
+                  </button>
                   {idsReplanificados.has(e.id) && (
                     <span className="ml-1 text-orange-400 font-bold text-[9px] bg-orange-400/10 px-1 py-0.5 rounded">↺</span>
                   )}
