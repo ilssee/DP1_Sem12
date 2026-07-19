@@ -24,8 +24,9 @@ import {
 import type { Solucion, Vuelo } from "./types";
 import SimulacionDiariaPage from "./pages/SimulacionDiariaPage";
 import RegistroPedidoPage from "./pages/RegistroPedidoPage";
+import ConfigAeropuertosPage from "./pages/ConfigAeropuertosPage";
 
-type Vista = "dia-a-dia" | "mapa" | "cargar" | "registro-pedido" | "colapso";
+type Vista = "dia-a-dia" | "mapa" | "cargar" | "registro-pedido" | "colapso" | "config-aeropuertos";
 
 interface EstadoCarga {
   cargando: boolean;
@@ -2324,6 +2325,12 @@ function App() {
             >
               <FileText size={18} /> Carga de Datos
             </button>
+            <button
+              onClick={() => setVistaActiva("config-aeropuertos")}
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-colors ${vistaActiva === "config-aeropuertos" ? "bg-tasf-green text-white" : "text-slate-400 hover:bg-slate-800 hover:text-white"}`}
+            >
+              ⚙ Aeropuertos
+            </button>
             {reporteGuardado && (
               <button
                 onClick={() => setMostrarReporte(true)}
@@ -2357,6 +2364,13 @@ function App() {
         {vistaActiva === "registro-pedido" && (
           <div className="w-full h-full overflow-auto">
             <RegistroPedidoPage onVolver={() => setVistaActiva("dia-a-dia")} />
+          </div>
+        )}
+
+        {/* VISTA: Configuración de Aeropuertos */}
+        {vistaActiva === "config-aeropuertos" && (
+          <div className="w-full h-full overflow-auto">
+            <ConfigAeropuertosPage onVolver={() => setVistaActiva("dia-a-dia")} />
           </div>
         )}
 

@@ -94,7 +94,7 @@ public class OperacionesDiariasController {
         p.setFechaRegistro(fechaHoraHusoOrigen);
 
         jdbc.update(
-                "INSERT INTO pedidos (id_pedido, origen, destino, fecha_registro, cantidad_maletas, id_cliente) VALUES (?,?,?,?,?,?)",
+                "INSERT INTO pedidos_diario (id_pedido, origen, destino, fecha_registro, cantidad_maletas, id_cliente) VALUES (?,?,?,?,?,?)",
                 p.getIdPedido(),
                 p.getOrigen(),
                 p.getDestino(),
@@ -138,8 +138,7 @@ public class OperacionesDiariasController {
 
         List<Pedido> pedidosManualesTotales = jdbc.query(
                 "SELECT p.id_pedido, p.origen, p.destino, p.fecha_registro, p.cantidad_maletas, p.id_cliente " +
-                        "FROM pedidos p WHERE p.id_pedido LIKE 'MANUAL-%' " +
-                        "AND p.fecha_registro >= ? ORDER BY p.fecha_registro",
+                        "FROM pedidos_diario p WHERE p.fecha_registro >= ? ORDER BY p.fecha_registro",
                 PEDIDO_MAPPER,
                 horaActualVirtual.minusHours(24));
 

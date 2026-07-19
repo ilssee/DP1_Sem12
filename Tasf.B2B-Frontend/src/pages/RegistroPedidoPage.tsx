@@ -7,6 +7,30 @@ const obtenerIsoLocal = (date: Date) => {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
 };
 
+const ZONA_A_AEROPUERTO: Record<string, string> = {
+  "America/Lima": "SPIM",
+  "America/Bogota": "SPIM",
+  "America/Argentina/Buenos_Aires": "SABE",
+  "America/Buenos_Aires": "SABE",
+  "Europe/Copenhagen": "EKCH",
+  "Europe/Paris": "EKCH",
+  "Europe/Berlin": "EKCH",
+  "Europe/Madrid": "EKCH",
+  "Europe/Brussels": "EKCH",
+  "Europe/Amsterdam": "EKCH",
+  "Europe/Rome": "EKCH",
+  "Europe/Stockholm": "EKCH",
+  "Europe/Oslo": "EKCH",
+  "Asia/Kolkata": "VIDP",
+  "Asia/Calcutta": "VIDP",
+};
+
+const detectarAeropuertoOrigen = (): { codigo: string; zona: string } => {
+  const zona = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const codigo = ZONA_A_AEROPUERTO[zona] ?? null;
+  return { codigo: codigo ?? "", zona };
+};
+
 const aeropuertosOpciones = Object.entries(aeropuertosDB)
   .map(([codigo, info]) => ({ codigo, label: `${codigo} — ${info.nombre}` }))
   .sort((a, b) => a.label.localeCompare(b.label));
@@ -22,7 +46,8 @@ interface PedidoRegistrado {
 }
 
 export default function RegistroPedidoPage({ onVolver }: { onVolver: () => void }) {
-  const [origen, setOrigen] = useState("");
+  const { codigo: origenDetectado, zona: zonaDetectada } = detectarAeropuertoOrigen();
+  const origen = origenDetectado;
   const [destino, setDestino] = useState("");
   const [cantidad, setCantidad] = useState(1);
   const [idCliente, setIdCliente] = useState("");
@@ -40,7 +65,11 @@ export default function RegistroPedidoPage({ onVolver }: { onVolver: () => void 
     e.preventDefault();
     setError(null);
     setExito(false);
-    if (!origen || !destino || !idCliente) {
+    if (!origen) {
+      setError("No se pudo detectar el aeropuerto de origen. Configura la zona horaria de Windows correctamente.");
+      return;
+    }
+    if (!destino || !idCliente) {
       setError("Completa todos los campos.");
       return;
     }
@@ -73,7 +102,6 @@ export default function RegistroPedidoPage({ onVolver }: { onVolver: () => void 
       setRegistrados(actualizados);
       localStorage.setItem("tasf_pedidos_manuales", JSON.stringify(actualizados));
 
-      setOrigen("");
       setDestino("");
       setCantidad(1);
       setIdCliente("");
@@ -112,22 +140,22 @@ export default function RegistroPedidoPage({ onVolver }: { onVolver: () => void 
             </h3>
 
             <form onSubmit={handleSubmit} className="space-y-4">
-              {/* Origen */}
+              {/* Origen — detectado automáticamente por zona horaria */}
               <div>
                 <label className="block text-xs text-slate-400 uppercase tracking-wider mb-1.5">
-                  Aeropuerto Origen
+                  Aeropuerto Origen (detectado automáticamente)
                 </label>
-                <select
-                  value={origen}
-                  onChange={e => setOrigen(e.target.value)}
-                  required
-                  className="w-full bg-slate-800 border border-slate-600 rounded-xl px-3 py-2.5 text-sm text-white outline-none focus:border-tasf-green transition-colors cursor-pointer"
-                >
-                  <option value="">— Selecciona origen —</option>
-                  {aeropuertosOpciones.map(a => (
-                    <option key={a.codigo} value={a.codigo}>{a.label}</option>
-                  ))}
-                </select>
+                {origen ? (
+                  <div className="w-full bg-slate-800/50 border border-tasf-green/40 rounded-xl px-3 py-2.5 flex items-center justify-between">
+                    <span className="text-sm font-bold text-tasf-green">{origen}</span>
+                    <span className="text-xs text-slate-500 font-mono">{zonaDetectada}</span>
+                  </div>
+                ) : (
+                  <div className="w-full bg-red-900/30 border border-red-500/40 rounded-xl px-3 py-2.5">
+                    <span className="text-xs text-red-400">Zona horaria no reconocida: {zonaDetectada}</span>
+                    <p className="text-xs text-slate-500 mt-0.5">Configura la zona horaria correcta en Windows.</p>
+                  </div>
+                )}
               </div>
 
               {/* Destino */}
