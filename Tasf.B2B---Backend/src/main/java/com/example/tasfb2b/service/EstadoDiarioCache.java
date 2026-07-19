@@ -3,17 +3,15 @@ package com.example.tasfb2b.service;
 import com.example.tasfb2b.model.Solucion;
 import org.springframework.stereotype.Component;
 
+import java.util.Collections;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
-/**
- * Cache en memoria del estado acumulado por día para operaciones día a día.
- * Clave: fechaInicioSimulacion (ej. "2026-06-29")
- * Se reinicia automáticamente si se detecta un día distinto al guardado.
- */
 @Component
 public class EstadoDiarioCache {
 
     private final ConcurrentHashMap<String, Solucion> cache = new ConcurrentHashMap<>();
+    private final Set<String> vuelosCancelados = Collections.newSetFromMap(new ConcurrentHashMap<>());
 
     public Solucion obtener(String fecha) {
         return cache.computeIfAbsent(fecha, k -> new Solucion());
@@ -25,5 +23,18 @@ public class EstadoDiarioCache {
 
     public void limpiarTodo() {
         cache.clear();
+        vuelosCancelados.clear();
+    }
+
+    public void cancelarVuelo(String claveVuelo) {
+        vuelosCancelados.add(claveVuelo);
+    }
+
+    public Set<String> getVuelosCancelados() {
+        return Collections.unmodifiableSet(vuelosCancelados);
+    }
+
+    public void limpiarCancelados() {
+        vuelosCancelados.clear();
     }
 }

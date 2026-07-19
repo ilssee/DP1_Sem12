@@ -12,18 +12,24 @@ interface PedidoLocal extends PedidoManualDTO {
   fechaRegistro: string;
 }
 
+// Siempre usar hora Lima (UTC-5) independientemente del timezone del sistema
+const toLima = (date: Date): Date =>
+  new Date(date.toLocaleString("en-US", { timeZone: "America/Lima" }));
+
 const obtenerIsoLocal = (date: Date) => {
+  const lima = toLima(date);
   const pad = (value: number) => String(value).padStart(2, "0");
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(
-    date.getDate(),
-  )}T${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(
-    date.getSeconds(),
+  return `${lima.getFullYear()}-${pad(lima.getMonth() + 1)}-${pad(
+    lima.getDate(),
+  )}T${pad(lima.getHours())}:${pad(lima.getMinutes())}:${pad(
+    lima.getSeconds(),
   )}`;
 };
 
 const obtenerIsoFechaLocal = (date: Date) => {
+  const lima = toLima(date);
   const pad = (value: number) => String(value).padStart(2, "0");
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+  return `${lima.getFullYear()}-${pad(lima.getMonth() + 1)}-${pad(lima.getDate())}`;
 };
 
 const formatearFecha = (date: Date) =>
@@ -62,9 +68,21 @@ const clasificarTramo = (
 export default function SimulacionDiariaPage({
   modoOscuro = true,
   onRegistrar,
+  onSolucionUpdate,
+  rutaEnvioSeleccionada: rutaEnvioExterna,
+  onRutaEnvioSeleccionadaClear: onRutaEnvioExternaClear,
+  cancelacionTrigger,
+  toastCancelacionExterno,
+  onToastCancelacionExternoClear,
 }: {
   modoOscuro?: boolean;
   onRegistrar?: () => void;
+  onSolucionUpdate?: (sol: any, minutos: number, fecha: string) => void;
+  rutaEnvioSeleccionada?: string | null;
+  onRutaEnvioSeleccionadaClear?: () => void;
+  cancelacionTrigger?: number;
+  toastCancelacionExterno?: string | null;
+  onToastCancelacionExternoClear?: () => void;
 }) {
   const [fechaActual, setFechaActual] = useState<Date>(() => new Date());
   const [isPlaying, setIsPlaying] = useState(true);
@@ -79,6 +97,8 @@ export default function SimulacionDiariaPage({
   const [formCantidad, setFormCantidad] = useState<number | "">("");
   const [formCliente, setFormCliente] = useState("0032535");
   const [formLoading, setFormLoading] = useState(false);
+  const [rutaEnvioSeleccionada, setRutaEnvioSeleccionada] = useState<string | null>(null);
+  const [toastCancelacion, setToastCancelacion] = useState<string | null>(null);
 
   // 1. INICIALIZACIÓN Y PERSISTENCIA DE PEDIDOS CON LOCALSTORAGE
   const [pedidosManuales, setPedidosManuales] = useState<PedidoLocal[]>(() => {
@@ -102,11 +122,11 @@ export default function SimulacionDiariaPage({
   const ultimoBloqueSolicitado = useRef(-1);
   const windowSizeMinutes = 1;
 
-  // 1. Regresar el cálculo de minutos al horario local de la laptop
-  const minutosHoy = useMemo(
-    () => fechaActual.getHours() * 60 + fechaActual.getMinutes(),
-    [fechaActual],
-  );
+  // Siempre en hora Lima para clasificar vuelos correctamente
+  const minutosHoy = useMemo(() => {
+    const lima = toLima(fechaActual);
+    return lima.getHours() * 60 + lima.getMinutes();
+  }, [fechaActual]);
 
   // 2. Regresar la fecha al formato local de la laptop
   const fechaHoy = useMemo(
@@ -133,9 +153,8 @@ export default function SimulacionDiariaPage({
     }
   };
 
-  // REEMPLAZAR POR ESTE BLOQUE:
+  // El reloj siempre corre (pausa solo detiene procesarVentana, no el tiempo)
   useEffect(() => {
-    if (!isPlaying) return;
     const interval = setInterval(() => {
       setFechaActual(new Date());
 
@@ -154,7 +173,7 @@ export default function SimulacionDiariaPage({
       }
     }, 1000);
     return () => clearInterval(interval);
-  }, [isPlaying]);
+  }, []);
 
   useEffect(() => {
     if (!isPlaying) return;
@@ -175,33 +194,47 @@ export default function SimulacionDiariaPage({
       ),
     );
 
-    const prefijosVuelos = new Set<string>();
-    Object.values(rutasAsignadas)
-      .flat()
-      .forEach((ruta) => {
-        const prefijo = `${ruta.origen}-${ruta.destino}-${ruta.horaSalida.slice(0, 5)}`;
-        prefijosVuelos.add(prefijo);
+    const rutasPlanificadas = Object.fromEntries(
+      Object.entries((resultadoBackend as any).rutasPlanificadas ?? {}).filter(([id]) =>
+        manualIds.has(id),
+      ),
+    );
+
+    // Usamos solo par origen-destino para filtrar (horaSalida en rutas es hora local,
+    // pero claves de ocupacionVuelos usan hora Lima — no son comparables directamente)
+    const paresRuta = new Set<string>();
+    const agregarPares = (rutas: Record<string, any[]>) =>
+      Object.values(rutas).flat().forEach((ruta: any) => {
+        paresRuta.add(`${ruta.origen}-${ruta.destino}`);
       });
+    agregarPares(rutasAsignadas);
+    agregarPares(rutasPlanificadas);
+
+    const partesDeClave = (key: string) => {
+      const partes = key.split('-');
+      return partes.length >= 2 ? `${partes[0]}-${partes[1]}` : key;
+    };
 
     const ocupacionVuelos = Object.fromEntries(
       Object.entries(resultadoBackend.ocupacionVuelos ?? {}).filter(([key]) =>
-        Array.from(prefijosVuelos).some((prefijo) => key.startsWith(prefijo)),
+        paresRuta.has(partesDeClave(key)),
       ),
     );
 
     const capacidadesVuelos = Object.fromEntries(
       Object.entries(resultadoBackend.capacidadesVuelos ?? {}).filter(([key]) =>
-        Array.from(prefijosVuelos).some((prefijo) => key.startsWith(prefijo)),
+        paresRuta.has(partesDeClave(key)),
       ),
     );
 
     const aeropuertosVisibles = new Set<string>();
-    Object.values(rutasAsignadas)
-      .flat()
-      .forEach((ruta) => {
+    const agregarAeropuertos = (rutas: Record<string, any[]>) =>
+      Object.values(rutas).flat().forEach((ruta: any) => {
         aeropuertosVisibles.add(ruta.origen);
         aeropuertosVisibles.add(ruta.destino);
       });
+    agregarAeropuertos(rutasAsignadas);
+    agregarAeropuertos(rutasPlanificadas);
 
     const ocupacionAeropuertos = Object.fromEntries(
       Object.entries(resultadoBackend.ocupacionAeropuertos ?? {}).filter(
@@ -212,6 +245,7 @@ export default function SimulacionDiariaPage({
     return {
       ...resultadoBackend,
       rutasAsignadas,
+      rutasPlanificadas,
       ocupacionVuelos,
       capacidadesVuelos,
       ocupacionAeropuertos,
@@ -225,6 +259,7 @@ export default function SimulacionDiariaPage({
           manualIds.has(id),
         ),
       ),
+      pedidosReplanificados: resultadoBackend.pedidosReplanificados ?? [],
     } as Solucion;
   }, [resultadoBackend, pedidosManuales]);
 
@@ -339,7 +374,19 @@ export default function SimulacionDiariaPage({
         console.error(e);
       }
     }
-  }, [resultadoBackend]); // Se sincronizará cada vez que llegue una nueva ventana del backend
+  }, [resultadoBackend]);
+
+  useEffect(() => {
+    onSolucionUpdate?.(solucionOperativa, minutosHoy, fechaHoy);
+  }, [solucionOperativa, minutosHoy, fechaHoy]);
+
+
+  // Re-ventana cuando el drawer externo cancela un vuelo
+  useEffect(() => {
+    if (cancelacionTrigger && cancelacionTrigger > 0) {
+      procesarVentana(new Date());
+    }
+  }, [cancelacionTrigger]);
 
   return (
     // 3. CAMBIO DE CLASES RAÍZ: Se reemplaza h-screen por h-full flex-1 para evitar el desbordamiento
@@ -365,8 +412,19 @@ export default function SimulacionDiariaPage({
             horaVirtualMinutos={minutosHoy}
             minutosVirtualesTotales={minutosHoy}
             fechaInicioSim={fechaHoy}
+            rutaEnvioSeleccionada={rutaEnvioExterna ?? rutaEnvioSeleccionada}
+            onRutaEnvioSeleccionadaClear={() => { setRutaEnvioSeleccionada(null); onRutaEnvioExternaClear?.(); }}
           />
         </section>
+
+        {/* Toast cancelación */}
+        {(toastCancelacion || toastCancelacionExterno) && (
+          <div className="absolute top-4 left-1/2 -translate-x-1/2 z-[500] flex items-center gap-3 bg-slate-800 border border-orange-400/60 text-white rounded-xl px-5 py-3 shadow-2xl">
+            <span className="w-2.5 h-2.5 rounded-full bg-orange-400 shrink-0" />
+            <span className="text-sm font-semibold">{toastCancelacionExterno ?? toastCancelacion}</span>
+            <button onClick={() => { setToastCancelacion(null); onToastCancelacionExternoClear?.(); }} className="ml-2 text-slate-400 hover:text-white text-xs">✕</button>
+          </div>
+        )}
 
         {/* Botón colapsar/expandir panel */}
         <button
@@ -470,26 +528,34 @@ export default function SimulacionDiariaPage({
                           ? [ruta[0].origen, ...ruta.map(v => v.destino)]
                           : [pedido.origen, pedido.destino];
                         const esDirecto = paradas.length === 2;
+                        const replanificado = !!(resultadoBackend?.pedidosReplanificados as any)?.has?.(pedido.idPedido)
+                          || !!(resultadoBackend?.pedidosReplanificados as any)?.includes?.(pedido.idPedido);
+                        const seleccionado = rutaEnvioSeleccionada === pedido.idPedido;
                         return (
-                        <div
-                          key={pedido.idPedido}
-                          className="rounded-lg bg-slate-900 border border-slate-700 px-2.5 py-2"
-                        >
-                          <div className="flex items-center justify-between gap-1">
-                            <span className="font-mono text-[10px] text-slate-500 truncate">
-                              {pedido.idPedido}
-                            </span>
-                            <span className="text-[10px] font-semibold text-slate-300 shrink-0">
-                              {pedido.cantidadMaletas} mal.
-                            </span>
+                          <div
+                            key={pedido.idPedido}
+                            onClick={() => setRutaEnvioSeleccionada(prev => prev === pedido.idPedido ? null : pedido.idPedido)}
+                            className={`rounded-lg border px-2.5 py-2 cursor-pointer transition-colors
+                              ${seleccionado ? 'bg-cyan-900/30 border-cyan-500/40' :
+                                replanificado ? 'bg-orange-950/40 border-orange-500/30' :
+                                'bg-slate-900 border-slate-700 hover:bg-slate-800'}`}
+                          >
+                            <div className="flex items-center justify-between gap-1">
+                              <span className="font-mono text-[10px] text-slate-500 truncate">
+                                {pedido.idPedido}
+                              </span>
+                              <div className="flex items-center gap-1 shrink-0">
+                                {replanificado && <span className="text-orange-400 font-bold text-[9px] bg-orange-400/10 px-1 py-0.5 rounded">↺ Replanificado</span>}
+                                <span className="text-[10px] font-semibold text-slate-300">{pedido.cantidadMaletas} mal.</span>
+                              </div>
+                            </div>
+                            <p className="text-xs font-semibold text-white mt-0.5">
+                              {paradas.join(" → ")}
+                            </p>
+                            <p className="text-[10px] mt-0.5 text-slate-500">
+                              {esDirecto ? "✈ Directo" : `✈ ${paradas.length - 2} escala${paradas.length - 2 > 1 ? "s" : ""}`}
+                            </p>
                           </div>
-                          <p className="text-xs font-semibold text-white mt-0.5">
-                            {paradas.join(" → ")}
-                          </p>
-                          <p className="text-[10px] mt-0.5 text-slate-500">
-                            {esDirecto ? "✈ Directo" : `✈ ${paradas.length - 2} escala${paradas.length - 2 > 1 ? "s" : ""}`}
-                          </p>
-                        </div>
                         );
                       })}
                     </div>

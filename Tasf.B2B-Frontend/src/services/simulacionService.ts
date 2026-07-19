@@ -84,6 +84,15 @@ export const registrarPedidoManual = async (
   }
 };
 
+export const cancelarVueloDiario = async (claveVuelo: string, horaActual?: string): Promise<{ cancelado: string; fecha: string; mensaje: string }> => {
+  const params: Record<string, string> = { claveVuelo };
+  if (horaActual) params.horaActual = horaActual;
+  const response = await axios.post<{ cancelado: string; fecha: string; mensaje: string }>(
+    `${API_BASE_URL}/diario/cancelar-vuelo`, null, { params }
+  );
+  return response.data;
+};
+
 export const limpiarEstadoDiario = async (fecha: string): Promise<void> => {
   try {
     await axios.delete(`${API_BASE_URL}/diario/limpiar`, {

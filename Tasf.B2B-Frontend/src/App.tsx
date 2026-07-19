@@ -207,7 +207,7 @@ function AeroSelect({ value, onChange, opciones, placeholder }: {
   );
 }
 
-function DrawerVuelos({ resultado, minutosVirtualesTotales, fechaInicio, onSeleccionar, onCerrar, vueloExpandir, onFiltrados, vuelosCancelados, onCancelarVuelo, onSeleccionarCancelado }: {
+function DrawerVuelos({ resultado, minutosVirtualesTotales, fechaInicio, onSeleccionar, onCerrar, vueloExpandir, onFiltrados, vuelosCancelados, onCancelarVuelo, onSeleccionarCancelado, todoCancelado }: {
   resultado: any; minutosVirtualesTotales: number; fechaInicio: string;
   onSeleccionar: (key: string) => void; onCerrar: () => void;
   vueloExpandir?: string | null;
@@ -215,6 +215,7 @@ function DrawerVuelos({ resultado, minutosVirtualesTotales, fechaInicio, onSelec
   vuelosCancelados?: Set<string>;
   onCancelarVuelo?: (claveVuelo: string) => void;
   onSeleccionarCancelado?: (clave: string) => void;
+  todoCancelado?: boolean;
 }) {
   const [tabVuelos, setTabVuelos] = useState<'vuelo'|'espera'|'cancelados'>('vuelo');
   const [orden, setOrden] = useState<{ col: 'cant'|'cap'|'pct'|'envios'|'minSalida'|'minLlegada'|'origen'|'destino'; dir: 1|-1 }>({ col: 'minSalida', dir: 1 });
@@ -250,12 +251,16 @@ function DrawerVuelos({ resultado, minutosVirtualesTotales, fechaInicio, onSelec
     if (!resultado) return [];
     // Contar envíos por vuelo
     const enviosPorVuelo = new Map<string, number>();
-    Object.entries(resultado.rutasAsignadas ?? {}).forEach(([, tramos]: any) => {
-      tramos.forEach((v: any) => {
-        const k = `${v.origen}-${v.destino}-${normH(v.horaSalida??"")}`;
-        enviosPorVuelo.set(k, (enviosPorVuelo.get(k) ?? 0) + 1);
+    const contarEnvios = (mapa: Record<string, any>) => {
+      Object.values(mapa).forEach((tramos: any) => {
+        tramos.forEach((v: any) => {
+          const k = `${v.origen}-${v.destino}-${normH(v.horaSalida??"")}`;
+          enviosPorVuelo.set(k, (enviosPorVuelo.get(k) ?? 0) + 1);
+        });
       });
-    });
+    };
+    contarEnvios(resultado.rutasAsignadas ?? {});
+    contarEnvios(resultado.rutasPlanificadas ?? {});
 
     const horasLlegadaMap = resultado.horasLlegada ?? {};
 
@@ -271,10 +276,16 @@ function DrawerVuelos({ resultado, minutosVirtualesTotales, fechaInicio, onSelec
         // Buscar horaLlegada desde el mapa dedicado (clave sin fecha)
         const claveRuta = `${origen}-${destino}-${horaSalida}`;
         let horaLlegada = normH(horasLlegadaMap[claveRuta] ?? horasLlegadaMap[sinFecha] ?? "");
-        // Fallback: buscar horaLlegada directamente en las rutas asignadas
+        // Fallback: buscar horaLlegada en rutas asignadas y planificadas
         if (!horaLlegada || horaLlegada === "00:00:00") {
-          for (const ruta of Object.values(resultado.rutasAsignadas ?? {}) as any[][]) {
-            const v = ruta.find((r: any) => r.origen === origen && r.destino === destino && normH(r.horaSalida ?? "") === horaSalida);
+          const todasRutas = [
+            ...Object.values(resultado.rutasAsignadas ?? {}),
+            ...Object.values(resultado.rutasPlanificadas ?? {}),
+          ] as any[][];
+          // horaSalida en rutas es hora local del aeropuerto; horaSalida del key de ocupacionVuelos
+          // es hora Lima — no son comparables para aeropuertos no-Lima, por eso solo se compara origen-destino
+          for (const ruta of todasRutas) {
+            const v = ruta.find((r: any) => r.origen === origen && r.destino === destino);
             if (v?.horaLlegada) { horaLlegada = normH(v.horaLlegada); break; }
           }
         }
@@ -358,19 +369,26 @@ function DrawerVuelos({ resultado, minutosVirtualesTotales, fechaInicio, onSelec
       const horaSalida = partes[2] ?? '';
       // Buscar hora llegada
       const horaLlegada = normH(horasLlegadaMap[ruta] ?? '');
-      if (!horaLlegada || horaLlegada === '00:00:00') return null;
+      if (!todoCancelado && (!horaLlegada || horaLlegada === '00:00:00')) return null;
       // Calcular minutos relativos al inicio
       const [vy, vm, vd] = fecha.split('-').map(Number);
       if (isNaN(vy)) return null;
-      const dias = Math.floor((new Date(vy,vm-1,vd).getTime() - new Date(fy,fm-1,fd2).getTime()) / 86400000);
-      const minSalida = dias * 1440 + parseHoraAMin(horaSalida);
-      let minLlegada = dias * 1440 + parseHoraAMin(horaLlegada);
-      if (minLlegada <= minSalida) minLlegada += 1440;
-      // Solo mostrar si el vuelo estaría "en vuelo" ahora
-      if (minutosVirtualesTotales < minSalida || minutosVirtualesTotales >= minLlegada) return null;
+      if (!todoCancelado) {
+        const dias = Math.floor((new Date(vy,vm-1,vd).getTime() - new Date(fy,fm-1,fd2).getTime()) / 86400000);
+        const minSalida = dias * 1440 + parseHoraAMin(horaSalida);
+        let minLlegada = dias * 1440 + parseHoraAMin(horaLlegada);
+        if (minLlegada <= minSalida) minLlegada += 1440;
+        // Solo mostrar si el vuelo estaría "en vuelo" ahora (modo período)
+        if (minutosVirtualesTotales < minSalida || minutosVirtualesTotales >= minLlegada) return null;
+      }
       return { clave, origen, destino, horaSalida, horaLlegada, fecha, ruta };
     })
     .filter(Boolean)
+    .filter((v: any, idx: number, arr: any[]) => {
+      // Deduplicar por origen-destino-HH:MM_fecha (puede haber versión con y sin segundos)
+      const key = `${v.origen}-${v.destino}-${v.horaSalida.substring(0,5)}_${v.fecha}`;
+      return arr.findIndex((x: any) => `${x.origen}-${x.destino}-${x.horaSalida.substring(0,5)}_${x.fecha}` === key) === idx;
+    })
     .filter((v: any) => {
       if (fo && !v.origen.toUpperCase().includes(fo)) return false;
       if (fd && !v.destino.toUpperCase().includes(fd)) return false;
@@ -378,7 +396,7 @@ function DrawerVuelos({ resultado, minutosVirtualesTotales, fechaInicio, onSelec
       if (bu && !`${v.origen}-${v.destino}-${v.horaSalida}`.toUpperCase().includes(bu)) return false;
       return true;
     }) as { clave: string; origen: string; destino: string; horaSalida: string; horaLlegada: string; fecha: string; ruta: string }[];
-  }, [vuelosCancelados, resultado, minutosVirtualesTotales, fechaInicio, filtroOrigen, filtroDestino, filtroHoraHH, filtroHoraMM, busquedaUT]);
+  }, [vuelosCancelados, resultado, minutosVirtualesTotales, fechaInicio, filtroOrigen, filtroDestino, filtroHoraHH, filtroHoraMM, busquedaUT, todoCancelado]);
 
   const [expandido, setExpandido] = useState<string | null>(null);
 
@@ -387,16 +405,22 @@ function DrawerVuelos({ resultado, minutosVirtualesTotales, fechaInicio, onSelec
     if (!resultado) return map;
     const detalles = resultado.detallesEnvios ?? {};
     const fechasTramos = resultado.fechasTramos ?? {};
-    Object.entries(resultado.rutasAsignadas ?? {}).forEach(([id, tramos]: any) => {
-      const fechas: string[] = fechasTramos[id] ?? [];
-      tramos.forEach((v: any, i: number) => {
-        const fecha = fechas[i];
-        const k = `${v.origen}-${v.destino}-${normH(v.horaSalida??'')}`;
-        const key = fecha ? `${k}_${fecha}` : k;
-        if (!map[key]) map[key] = [];
-        map[key].push({ id, ...detalles[id] });
+    const agregarTramos = (rutas: Record<string, any>) => {
+      Object.entries(rutas).forEach(([id, tramos]: any) => {
+        const fechas: string[] = fechasTramos[id] ?? [];
+        tramos.forEach((v: any, i: number) => {
+          const fecha = fechas[i];
+          const k = `${v.origen}-${v.destino}-${normH(v.horaSalida??'')}`;
+          const key = fecha ? `${k}_${fecha}` : k;
+          if (!map[key]) map[key] = [];
+          // Evitar duplicados si el envío ya está en ambas listas
+          if (!map[key].some((e: any) => e.id === id))
+            map[key].push({ id, ...detalles[id] });
+        });
       });
-    });
+    };
+    agregarTramos(resultado.rutasAsignadas ?? {});
+    agregarTramos(resultado.rutasPlanificadas ?? {});
     return map;
   }, [resultado]);
 
@@ -990,13 +1014,17 @@ function DrawerEnvios({ resultado, minutosVirtualesTotales, fechaInicioSim, onCe
   const datosBase = useMemo(() => {
     const detalles = resultado?.detallesEnvios ?? {};
     const rutasAsignadas = resultado?.rutasAsignadas ?? {};
+    const rutasPlanificadas = (resultado as any)?.rutasPlanificadas ?? {};
     const fechasTramos = (resultado as any)?.fechasTramos ?? {};
     return Object.entries(detalles as Record<string, any>).map(([id, detalle]) => {
-      const tramos: any[] = rutasAsignadas[id] ?? [];
+      const tramosActivos: any[] = rutasAsignadas[id] ?? [];
+      // Para envíos en espera (día a día), la ruta está en rutasPlanificadas
+      const tramos: any[] = tramosActivos.length > 0 ? tramosActivos : (rutasPlanificadas[id] ?? []);
+      const esPlanificado = tramosActivos.length === 0 && tramos.length > 0;
       const fechas: string[] = fechasTramos[id] ?? [];
-      const vuelo = tramos.map(v => `${v.origen}-${v.destino}-${normH(v.horaSalida??'')}`).join(' → ') || '—';
+      const vuelo = tramosActivos.map((v: any) => `${v.origen}-${v.destino}-${normH(v.horaSalida??'')}`).join(' → ') || '—';
       const escalas = Math.max(0, tramos.length - 1);
-      return { id, idCliente: detalle.idCliente, vuelo, maletas: detalle.cantidadMaletas, origen: detalle.origen, destino: detalle.destino, tramos, fechas, escalas };
+      return { id, idCliente: detalle.idCliente, vuelo, maletas: detalle.cantidadMaletas, origen: detalle.origen, destino: detalle.destino, tramos, fechas, escalas, esPlanificado };
     });
   }, [resultado]);
 
@@ -1316,7 +1344,7 @@ function DrawerEnvios({ resultado, minutosVirtualesTotales, fechaInicioSim, onCe
                         {e.tramos.map((t: any, i: number) => {
                           const normH = (s: string) => { const p = (s ?? '').split(':'); return `${p[0].padStart(2,'0')}:${(p[1]??'00').padStart(2,'0')}`; };
                           const idVuelo = `${t.origen}-${t.destino}-${normH(t.horaSalida ?? '')}`;
-                          const fecha = e.fechas?.[i] ?? '—';
+                          const fecha = e.fechas?.[i] ?? (e.esPlanificado ? 'Planificado' : '—');
                           const esActual = tab === 'vuelo' && e.vuelo === idVuelo;
                           return (
                             <tr key={i} className={`border-b border-slate-800/50 ${esActual ? 'bg-cyan-900/30' : ''}`}>
@@ -1396,10 +1424,14 @@ function EnviosPanel({ resultado, minutosVirtualesTotales, fechaInicioSim, vuelo
     }
 
     // Clasificar cada envío según el estado de su último tramo activo
+    const rutasPlanificadas = resultado?.rutasPlanificadas ?? {};
     const grupos: Record<string, any[]> = { vuelo: [], espera: [], completado: [] };
     entradas.forEach(([id, detalle]) => {
       const tramos: any[] = rutasAsignadas[id] ?? [];
-      if (tramos.length === 0) { grupos.espera.push({ id, detalle }); return; }
+      if (tramos.length === 0) {
+        grupos.espera.push({ id, detalle, tramosEspera: rutasPlanificadas[id] ?? [] });
+        return;
+      }
       // Determinar estado: si algún tramo está en vuelo → vuelo; si todos completados → completado; si no → espera
       let estado = 'completado';
       for (const v of tramos) {
@@ -1411,7 +1443,7 @@ function EnviosPanel({ resultado, minutosVirtualesTotales, fechaInicioSim, vuelo
         if (e === 'vuelo') { estado = 'vuelo'; break; }
         if (e === 'espera') { estado = 'espera'; }
       }
-      grupos[estado].push({ id, detalle });
+      grupos[estado].push({ id, detalle, tramosEspera: estado === 'espera' ? (rutasPlanificadas[id] ?? []) : [] });
     });
     return { todos: entradas, grupos };
   }, [resultado, vueloResaltado, minutosVirtualesTotales, fechaInicioSim, filtroOrigen, filtroDestino]);
@@ -1454,7 +1486,7 @@ function EnviosPanel({ resultado, minutosVirtualesTotales, fechaInicioSim, vuelo
           <p className="text-slate-500 italic text-xs mt-4 text-center">Esperando datos...</p>
         ) : grupos[tab].length === 0 ? (
           <p className="text-slate-500 italic text-xs mt-4 text-center">Sin envíos</p>
-        ) : grupos[tab].map(({ id, detalle }) => (
+        ) : grupos[tab].map(({ id, detalle, tramosEspera }) => (
           <div key={id} className="bg-slate-800 rounded-lg px-2 py-1.5 text-[10px]">
             <div className="flex justify-between items-center mb-0.5">
               <span className="font-bold text-white font-mono truncate max-w-[120px]" title={id}>{id}</span>
@@ -1464,6 +1496,24 @@ function EnviosPanel({ resultado, minutosVirtualesTotales, fechaInicioSim, vuelo
               <span>{detalle.origen} → {detalle.destino}</span>
               <span className="truncate max-w-[80px] text-right" title={detalle.idCliente}>{detalle.idCliente}</span>
             </div>
+            {tramosEspera && tramosEspera.length > 0 && (
+              <div className="mt-1 pt-1 border-t border-slate-700">
+                <div className="flex flex-wrap gap-x-1 items-center text-[9px] text-amber-300">
+                  {[tramosEspera[0].origen, ...tramosEspera.map((v: any) => v.destino)].map((aero: string, i: number, arr: string[]) => (
+                    <span key={i} className="flex items-center gap-0.5">
+                      <span className="font-mono font-bold">{aero}</span>
+                      {i < arr.length - 1 && <span className="text-slate-500">→</span>}
+                    </span>
+                  ))}
+                  {tramosEspera.length > 1 && (
+                    <span className="text-slate-500 ml-1">+{tramosEspera.length - 1} escala{tramosEspera.length > 2 ? 's' : ''}</span>
+                  )}
+                </div>
+                <div className="text-[9px] text-slate-500 mt-0.5">
+                  Sale: {(tramosEspera[0].horaSalida ?? '').toString().slice(0, 5)}
+                </div>
+              </div>
+            )}
           </div>
         ))}
       </div>
@@ -1779,6 +1829,14 @@ function App() {
   const [panelVuelosAbierto, setPanelVuelosAbierto] = useState(false);
   const [panelEnviosAbierto, setPanelEnviosAbierto] = useState(false);
   const [panelAlmacenesAbierto, setPanelAlmacenesAbierto] = useState(false);
+  // Estado día a día levantado para los drawers
+  const [solucionDiaria, setSolucionDiaria] = useState<Solucion | null>(null);
+  const [minutosDiario, setMinutosDiario] = useState(0);
+  const [fechaDiaria, setFechaDiaria] = useState("");
+  const [vuelosCanceladosDiario, setVuelosCanceladosDiario] = useState<Set<string>>(new Set());
+  const [rutaEnvioDiaria, setRutaEnvioDiaria] = useState<string | null>(null);
+  const [cancelacionTriggerDiario, setCancelacionTriggerDiario] = useState(0);
+  const [toastCancelacionDiario, setToastCancelacionDiario] = useState<string | null>(null);
   const [aeropuertoResaltado, setAeropuertoResaltado] = useState<string | null>(null);
   const [aeropuertosFiltrados, setAeropuertosFiltrados] = useState<string[] | null>(null);
   const [vuelosFiltrados, setVuelosFiltrados] = useState<string[] | null>(null);
@@ -2354,10 +2412,82 @@ function App() {
       {/* ── ÁREA PRINCIPAL ── */}
       <div className="flex-1 flex overflow-hidden relative">
         {/* VISTA 1: Simulación Día a Día */}
-        <div
-          className={`w-full h-full ${vistaActiva === "dia-a-dia" ? "block" : "hidden"}`}
-        >
-          <SimulacionDiariaPage modoOscuro={modoOscuro} onRegistrar={() => setVistaActiva("registro-pedido")} />
+        <div className={`w-full h-full relative ${vistaActiva === "dia-a-dia" ? "flex flex-col" : "hidden"}`}>
+          <SimulacionDiariaPage
+            modoOscuro={modoOscuro}
+            onRegistrar={() => setVistaActiva("registro-pedido")}
+            onSolucionUpdate={(sol, min, fecha) => { setSolucionDiaria(sol); setMinutosDiario(min); setFechaDiaria(fecha); }}
+            rutaEnvioSeleccionada={rutaEnvioDiaria}
+            onRutaEnvioSeleccionadaClear={() => setRutaEnvioDiaria(null)}
+            cancelacionTrigger={cancelacionTriggerDiario}
+            toastCancelacionExterno={toastCancelacionDiario}
+            onToastCancelacionExternoClear={() => setToastCancelacionDiario(null)}
+          />
+          {/* Botones drawers día a día */}
+          {solucionDiaria && (
+            <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-[500] flex gap-2">
+              <button onClick={() => { setPanelAlmacenesAbierto(v => !v); setPanelEnviosAbierto(false); setPanelVuelosAbierto(false); }}
+                className={`text-xs font-bold px-3 py-1.5 rounded-lg border flex items-center gap-2 transition-colors ${panelAlmacenesAbierto ? 'bg-slate-700 border-slate-500 text-white' : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-600'}`}>
+                🏭 Almacenes {panelAlmacenesAbierto ? '▶' : '◀'}
+              </button>
+              <button onClick={() => { setPanelEnviosAbierto(v => !v); setPanelAlmacenesAbierto(false); setPanelVuelosAbierto(false); }}
+                className={`text-xs font-bold px-3 py-1.5 rounded-lg border flex items-center gap-2 transition-colors ${panelEnviosAbierto ? 'bg-slate-700 border-slate-500 text-white' : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-600'}`}>
+                📦 Envíos {panelEnviosAbierto ? '▶' : '◀'}
+              </button>
+              <button onClick={() => { setPanelVuelosAbierto(v => !v); setPanelAlmacenesAbierto(false); setPanelEnviosAbierto(false); }}
+                className={`text-xs font-bold px-3 py-1.5 rounded-lg border flex items-center gap-2 transition-colors ${panelVuelosAbierto ? 'bg-slate-700 border-slate-500 text-white' : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-600'}`}>
+                ✈ Vuelos {panelVuelosAbierto ? '▶' : '◀'}
+              </button>
+            </div>
+          )}
+          {/* Drawer Almacenes día a día */}
+          <div className={`absolute top-0 right-0 h-full z-[999] bg-slate-900 border-l border-slate-700 shadow-2xl flex flex-col transition-all duration-300 ${panelAlmacenesAbierto && vistaActiva === "dia-a-dia" ? 'w-[780px]' : 'w-0 overflow-hidden'}`}>
+            {panelAlmacenesAbierto && vistaActiva === "dia-a-dia" && solucionDiaria && (
+              <DrawerAlmacenes resultado={solucionDiaria} minutosVirtualesTotales={minutosDiario} fechaInicioSim={fechaDiaria}
+                onCerrar={() => setPanelAlmacenesAbierto(false)} onSeleccionarAeropuerto={() => {}}
+                ocupacionAeropuertosRT={solucionDiaria.ocupacionAeropuertos ?? {}} />
+            )}
+          </div>
+          {/* Drawer Envíos día a día */}
+          <div className={`absolute top-0 right-0 h-full z-[999] bg-slate-900 border-l border-slate-700 shadow-2xl flex flex-col transition-all duration-300 ${panelEnviosAbierto && vistaActiva === "dia-a-dia" ? 'w-[620px]' : 'w-0 overflow-hidden'}`}>
+            {panelEnviosAbierto && vistaActiva === "dia-a-dia" && solucionDiaria && (
+              <DrawerEnvios resultado={solucionDiaria} minutosVirtualesTotales={minutosDiario} fechaInicioSim={fechaDiaria}
+                onCerrar={() => setPanelEnviosAbierto(false)} onVerVuelo={() => {}} onVerAlmacen={() => {}}
+                onVerRutaEnvio={(id) => setRutaEnvioDiaria(prev => prev === id ? null : id)} />
+            )}
+          </div>
+          {/* Drawer Vuelos día a día */}
+          <div className={`absolute top-0 right-0 h-full z-[999] bg-slate-900 border-l border-slate-700 shadow-2xl flex flex-col transition-all duration-300 ${panelVuelosAbierto && vistaActiva === "dia-a-dia" ? 'w-[820px]' : 'w-0 overflow-hidden'}`}>
+            {panelVuelosAbierto && vistaActiva === "dia-a-dia" && solucionDiaria && (
+              <DrawerVuelos resultado={solucionDiaria} minutosVirtualesTotales={minutosDiario} fechaInicio={fechaDiaria}
+                onSeleccionar={() => {}} onCerrar={() => setPanelVuelosAbierto(false)}
+                vuelosCancelados={vuelosCanceladosDiario}
+                todoCancelado={true}
+                onCancelarVuelo={async (claveRaw) => {
+                  if (!confirm(`¿Cancelar vuelo ${claveRaw}? Los pedidos asignados a este vuelo serán reprogramados.`)) return;
+                  // Normalizar a HH:MM (el drawer pasa HH:MM:SS pero el backend espera HH:MM)
+                  const partes = claveRaw.split('-');
+                  const clave = partes.length >= 3
+                    ? `${partes[0]}-${partes[1]}-${partes[2].substring(0, 5)}`
+                    : claveRaw;
+                  const { cancelarVueloDiario } = await import('./services/simulacionService');
+                  const pad = (n: number) => String(n).padStart(2, '0');
+                  const now = new Date();
+                  const horaActual = `${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())}T${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
+                  const resultado = await cancelarVueloDiario(clave, horaActual);
+                  // Guardar con HH:MM (para el backend) y con HH:MM:SS (para que el drawer lo muestre como cancelado)
+                  const claveConFechaConSeg = `${claveRaw.split('_')[0]}_${resultado.cancelado.split('_').pop()}`;
+                  setVuelosCanceladosDiario(prev => new Set([...prev, resultado.cancelado, claveConFechaConSeg]));
+                  const fechaHoy = `${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())}`;
+                  const esMañana = resultado.fecha !== fechaHoy;
+                  const rutaLabel = `${partes[0]} → ${partes[1]}`;
+                  const msg = `Vuelo ${rutaLabel} cancelado para ${esMañana ? `mañana (${resultado.fecha})` : `hoy (${resultado.fecha})`} — reasignando maletas...`;
+                  setToastCancelacionDiario(msg);
+                  setTimeout(() => setToastCancelacionDiario(null), 6000);
+                  setCancelacionTriggerDiario(t => t + 1);
+                }} />
+            )}
+          </div>
         </div>
 
         {/* VISTA: Registro de Pedido */}
