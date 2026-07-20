@@ -6,6 +6,9 @@ import {
   simularVentanaDiaria,
 } from "../services/simulacionService";
 import type { PedidoManualDTO, Solucion } from "../types";
+import { Client } from "@stomp/stompjs";
+import SockJS from "sockjs-client";
+import { obtenerPedidosHoy } from "../services/simulacionService";
 
 interface PedidoLocal extends PedidoManualDTO {
   idPedido: string;
@@ -52,19 +55,6 @@ const parseHoraAMinutos = (hora: string) => {
   return Number(h) * 60 + Number(m);
 };
 
-const clasificarTramo = (
-  horaSalida: string,
-  horaLlegada: string,
-  minutosHoy: number,
-) => {
-  const salida = parseHoraAMinutos(horaSalida);
-  let llegada = parseHoraAMinutos(horaLlegada);
-  if (llegada <= salida) llegada += 1440;
-  if (minutosHoy < salida) return "pendiente";
-  if (minutosHoy >= llegada) return "completado";
-  return "vuelo";
-};
-
 export default function SimulacionDiariaPage({
   modoOscuro = true,
   onRegistrar,
@@ -97,27 +87,12 @@ export default function SimulacionDiariaPage({
   const [formCantidad, setFormCantidad] = useState<number | "">("");
   const [formCliente, setFormCliente] = useState("0032535");
   const [formLoading, setFormLoading] = useState(false);
-  const [rutaEnvioSeleccionada, setRutaEnvioSeleccionada] = useState<string | null>(null);
+  const [rutaEnvioSeleccionada, setRutaEnvioSeleccionada] = useState<
+    string | null
+  >(null);
   const [toastCancelacion, setToastCancelacion] = useState<string | null>(null);
 
-  // 1. INICIALIZACIÓN Y PERSISTENCIA DE PEDIDOS CON LOCALSTORAGE
-  const [pedidosManuales, setPedidosManuales] = useState<PedidoLocal[]>(() => {
-    const saved = localStorage.getItem("tasf_pedidos_manuales");
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved) as PedidoLocal[];
-        // Limpieza de seguridad: borrar pedidos con más de 12 horas reales
-        const doceHorasMs = 12 * 60 * 60 * 1000;
-        const ahora = new Date().getTime();
-        return parsed.filter(
-          (p) => ahora - new Date(p.fechaRegistro).getTime() < doceHorasMs,
-        );
-      } catch (e) {
-        return [];
-      }
-    }
-    return [];
-  });
+  const [pedidosManuales, setPedidosManuales] = useState<PedidoLocal[]>([]);
 
   const ultimoBloqueSolicitado = useRef(-1);
   const windowSizeMinutes = 1;
@@ -128,23 +103,20 @@ export default function SimulacionDiariaPage({
     return lima.getHours() * 60 + lima.getMinutes();
   }, [fechaActual]);
 
-  // 2. Regresar la fecha al formato local de la laptop
   const fechaHoy = useMemo(
     () => obtenerIsoFechaLocal(fechaActual),
     [fechaActual],
   );
 
-  // 3. Dentro de la función 'procesarVentana', vuelve a enviar la hora local limpia
   const procesarVentana = async (fechaHora: Date) => {
     setIsProcessingWindow(true);
     try {
-      const timestampAEnviar = obtenerIsoLocal(fechaHora); // Envía los dígitos locales (ej: 23:06:00)
+      const timestampAEnviar = obtenerIsoLocal(fechaHora);
       const nuevaSolucion = await simularVentanaDiaria(
         `${obtenerIsoFechaLocal(fechaHora)}T00:00:00`,
         timestampAEnviar,
         windowSizeMinutes,
       );
-      console.log("Respuesta cruda del Backend:", nuevaSolucion);
       setResultadoBackend(nuevaSolucion);
     } catch (error) {
       console.error("Error al traer nueva ventana:", error);
@@ -153,26 +125,47 @@ export default function SimulacionDiariaPage({
     }
   };
 
-  // El reloj siempre corre (pausa solo detiene procesarVentana, no el tiempo)
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setFechaActual(new Date());
+  const cargarPedidosDesdeBD = async (fecha: Date) => {
+    try {
+      const data = await obtenerPedidosHoy(obtenerIsoLocal(fecha));
+      setPedidosManuales(
+        data.map((p) => ({
+          idPedido: p.idPedido,
+          origen: p.origen,
+          destino: p.destino,
+          cantidadMaletas: p.cantidadMaletas,
+          idCliente: p.idCliente,
+          fechaRegistro: p.fechaRegistro,
+          fechaHoraVirtual: p.fechaRegistro,
+        })),
+      );
+    } catch (e) {
+      console.error("Error cargando pedidos", e);
+    }
+  };
 
-      // Sincroniza los pedidos del localStorage cada segundo de forma segura
-      const saved = localStorage.getItem("tasf_pedidos_manuales");
-      if (saved) {
-        try {
-          const parsed = JSON.parse(saved) as PedidoLocal[];
-          const doceHorasMs = 12 * 60 * 60 * 1000;
-          const ahora = new Date().getTime();
-          const filtrados = parsed.filter(
-            (p) => ahora - new Date(p.fechaRegistro).getTime() < doceHorasMs,
-          );
-          setPedidosManuales(filtrados);
-        } catch (e) {}
-      }
-    }, 1000);
-    return () => clearInterval(interval);
+  // ÚNICO useEffect PARA EL RELOJ Y WEBSOCKET (Los antiguos de localStorage fueron borrados)
+  useEffect(() => {
+    cargarPedidosDesdeBD(new Date());
+
+    const client = new Client({
+      webSocketFactory: () => new SockJS("http://localhost:8080/ws-tasf"), // Asegúrate que el puerto coincida con tu backend
+      onConnect: () => {
+        console.log("Conectado a la Orquesta WebSocket 🟢");
+        client.subscribe("/topic/operaciones-diarias", () => {
+          cargarPedidosDesdeBD(new Date());
+          procesarVentana(new Date());
+        });
+      },
+    });
+    client.activate();
+
+    const interval = setInterval(() => setFechaActual(new Date()), 1000);
+
+    return () => {
+      clearInterval(interval);
+      client.deactivate();
+    };
   }, []);
 
   useEffect(() => {
@@ -195,23 +188,23 @@ export default function SimulacionDiariaPage({
     );
 
     const rutasPlanificadas = Object.fromEntries(
-      Object.entries((resultadoBackend as any).rutasPlanificadas ?? {}).filter(([id]) =>
-        manualIds.has(id),
+      Object.entries((resultadoBackend as any).rutasPlanificadas ?? {}).filter(
+        ([id]) => manualIds.has(id),
       ),
     );
 
-    // Usamos solo par origen-destino para filtrar (horaSalida en rutas es hora local,
-    // pero claves de ocupacionVuelos usan hora Lima — no son comparables directamente)
     const paresRuta = new Set<string>();
     const agregarPares = (rutas: Record<string, any[]>) =>
-      Object.values(rutas).flat().forEach((ruta: any) => {
-        paresRuta.add(`${ruta.origen}-${ruta.destino}`);
-      });
+      Object.values(rutas)
+        .flat()
+        .forEach((ruta: any) => {
+          paresRuta.add(`${ruta.origen}-${ruta.destino}`);
+        });
     agregarPares(rutasAsignadas);
     agregarPares(rutasPlanificadas);
 
     const partesDeClave = (key: string) => {
-      const partes = key.split('-');
+      const partes = key.split("-");
       return partes.length >= 2 ? `${partes[0]}-${partes[1]}` : key;
     };
 
@@ -229,10 +222,12 @@ export default function SimulacionDiariaPage({
 
     const aeropuertosVisibles = new Set<string>();
     const agregarAeropuertos = (rutas: Record<string, any[]>) =>
-      Object.values(rutas).flat().forEach((ruta: any) => {
-        aeropuertosVisibles.add(ruta.origen);
-        aeropuertosVisibles.add(ruta.destino);
-      });
+      Object.values(rutas)
+        .flat()
+        .forEach((ruta: any) => {
+          aeropuertosVisibles.add(ruta.origen);
+          aeropuertosVisibles.add(ruta.destino);
+        });
     agregarAeropuertos(rutasAsignadas);
     agregarAeropuertos(rutasPlanificadas);
 
@@ -274,11 +269,9 @@ export default function SimulacionDiariaPage({
     };
 
     pedidosManuales.forEach((pedido) => {
-      // 1. Si existe en fechasTramos, significa que el algoritmo ya le planificó una ruta con éxito
       const tieneRutaPlanificada =
         !!solucionOperativa?.fechasTramos?.[pedido.idPedido];
 
-      // 2. Si existe en rutasAsignadas, significa que el backend confirmó que está en el aire ahora mismo
       const rutasActivas =
         solucionOperativa?.rutasAsignadas?.[pedido.idPedido] ?? [];
       const tieneRutaActiva = rutasActivas.length > 0;
@@ -288,7 +281,7 @@ export default function SimulacionDiariaPage({
       if (tieneRutaActiva) {
         estado = "en-vuelo";
       } else if (tieneRutaPlanificada) {
-        estado = "asignado"; // Esperando pacientemente su hora de salida en el almacén
+        estado = "asignado";
       } else {
         estado = isProcessingWindow ? "procesando" : "pendiente";
       }
@@ -324,6 +317,7 @@ export default function SimulacionDiariaPage({
         fechaHoraVirtual: obtenerIsoLocal(fechaActual),
       });
 
+      // Actualización visual instantánea (el WebSocket refrescará todo de todos modos)
       setPedidosManuales((prev) => [
         ...prev,
         {
@@ -360,28 +354,9 @@ export default function SimulacionDiariaPage({
       : "Último estado sincronizado";
 
   useEffect(() => {
-    const saved = localStorage.getItem("tasf_pedidos_manuales");
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved) as PedidoLocal[];
-        const doceHorasMs = 12 * 60 * 60 * 1000;
-        const ahora = new Date().getTime();
-        const filtrados = parsed.filter(
-          (p) => ahora - new Date(p.fechaRegistro).getTime() < doceHorasMs,
-        );
-        setPedidosManuales(filtrados);
-      } catch (e) {
-        console.error(e);
-      }
-    }
-  }, [resultadoBackend]);
-
-  useEffect(() => {
     onSolucionUpdate?.(solucionOperativa, minutosHoy, fechaHoy);
   }, [solucionOperativa, minutosHoy, fechaHoy]);
 
-
-  // Re-ventana cuando el drawer externo cancela un vuelo
   useEffect(() => {
     if (cancelacionTrigger && cancelacionTrigger > 0) {
       procesarVentana(new Date());
@@ -389,7 +364,6 @@ export default function SimulacionDiariaPage({
   }, [cancelacionTrigger]);
 
   return (
-    // 3. CAMBIO DE CLASES RAÍZ: Se reemplaza h-screen por h-full flex-1 para evitar el desbordamiento
     <div className="h-full flex-1 min-h-0 flex flex-col relative font-sans bg-slate-950">
       <div className="flex-1 overflow-hidden min-h-0 flex gap-0">
         {/* Mapa */}
@@ -413,7 +387,10 @@ export default function SimulacionDiariaPage({
             minutosVirtualesTotales={minutosHoy}
             fechaInicioSim={fechaHoy}
             rutaEnvioSeleccionada={rutaEnvioExterna ?? rutaEnvioSeleccionada}
-            onRutaEnvioSeleccionadaClear={() => { setRutaEnvioSeleccionada(null); onRutaEnvioExternaClear?.(); }}
+            onRutaEnvioSeleccionadaClear={() => {
+              setRutaEnvioSeleccionada(null);
+              onRutaEnvioExternaClear?.();
+            }}
           />
         </section>
 
@@ -421,8 +398,18 @@ export default function SimulacionDiariaPage({
         {(toastCancelacion || toastCancelacionExterno) && (
           <div className="absolute top-4 left-1/2 -translate-x-1/2 z-[500] flex items-center gap-3 bg-slate-800 border border-orange-400/60 text-white rounded-xl px-5 py-3 shadow-2xl">
             <span className="w-2.5 h-2.5 rounded-full bg-orange-400 shrink-0" />
-            <span className="text-sm font-semibold">{toastCancelacionExterno ?? toastCancelacion}</span>
-            <button onClick={() => { setToastCancelacion(null); onToastCancelacionExternoClear?.(); }} className="ml-2 text-slate-400 hover:text-white text-xs">✕</button>
+            <span className="text-sm font-semibold">
+              {toastCancelacionExterno ?? toastCancelacion}
+            </span>
+            <button
+              onClick={() => {
+                setToastCancelacion(null);
+                onToastCancelacionExternoClear?.();
+              }}
+              className="ml-2 text-slate-400 hover:text-white text-xs"
+            >
+              ✕
+            </button>
           </div>
         )}
 
@@ -523,37 +510,64 @@ export default function SimulacionDiariaPage({
                   ) : (
                     <div className="space-y-1.5">
                       {[...pedidos].reverse().map((pedido) => {
-                        const ruta = resultadoBackend?.rutasPlanificadas?.[pedido.idPedido];
+                        const ruta =
+                          resultadoBackend?.rutasPlanificadas?.[
+                            pedido.idPedido
+                          ];
                         const paradas = ruta
-                          ? [ruta[0].origen, ...ruta.map(v => v.destino)]
+                          ? [ruta[0].origen, ...ruta.map((v) => v.destino)]
                           : [pedido.origen, pedido.destino];
                         const esDirecto = paradas.length === 2;
-                        const replanificado = !!(resultadoBackend?.pedidosReplanificados as any)?.has?.(pedido.idPedido)
-                          || !!(resultadoBackend?.pedidosReplanificados as any)?.includes?.(pedido.idPedido);
-                        const seleccionado = rutaEnvioSeleccionada === pedido.idPedido;
+                        const replanificado =
+                          !!(
+                            resultadoBackend?.pedidosReplanificados as any
+                          )?.has?.(pedido.idPedido) ||
+                          !!(
+                            resultadoBackend?.pedidosReplanificados as any
+                          )?.includes?.(pedido.idPedido);
+                        const seleccionado =
+                          rutaEnvioSeleccionada === pedido.idPedido;
                         return (
                           <div
                             key={pedido.idPedido}
-                            onClick={() => setRutaEnvioSeleccionada(prev => prev === pedido.idPedido ? null : pedido.idPedido)}
+                            onClick={() =>
+                              setRutaEnvioSeleccionada((prev) =>
+                                prev === pedido.idPedido
+                                  ? null
+                                  : pedido.idPedido,
+                              )
+                            }
                             className={`rounded-lg border px-2.5 py-2 cursor-pointer transition-colors
-                              ${seleccionado ? 'bg-cyan-900/30 border-cyan-500/40' :
-                                replanificado ? 'bg-orange-950/40 border-orange-500/30' :
-                                'bg-slate-900 border-slate-700 hover:bg-slate-800'}`}
+                              ${
+                                seleccionado
+                                  ? "bg-cyan-900/30 border-cyan-500/40"
+                                  : replanificado
+                                    ? "bg-orange-950/40 border-orange-500/30"
+                                    : "bg-slate-900 border-slate-700 hover:bg-slate-800"
+                              }`}
                           >
                             <div className="flex items-center justify-between gap-1">
                               <span className="font-mono text-[10px] text-slate-500 truncate">
                                 {pedido.idPedido}
                               </span>
                               <div className="flex items-center gap-1 shrink-0">
-                                {replanificado && <span className="text-orange-400 font-bold text-[9px] bg-orange-400/10 px-1 py-0.5 rounded">↺ Replanificado</span>}
-                                <span className="text-[10px] font-semibold text-slate-300">{pedido.cantidadMaletas} mal.</span>
+                                {replanificado && (
+                                  <span className="text-orange-400 font-bold text-[9px] bg-orange-400/10 px-1 py-0.5 rounded">
+                                    ↺ Replanificado
+                                  </span>
+                                )}
+                                <span className="text-[10px] font-semibold text-slate-300">
+                                  {pedido.cantidadMaletas} mal.
+                                </span>
                               </div>
                             </div>
                             <p className="text-xs font-semibold text-white mt-0.5">
                               {paradas.join(" → ")}
                             </p>
                             <p className="text-[10px] mt-0.5 text-slate-500">
-                              {esDirecto ? "✈ Directo" : `✈ ${paradas.length - 2} escala${paradas.length - 2 > 1 ? "s" : ""}`}
+                              {esDirecto
+                                ? "✈ Directo"
+                                : `✈ ${paradas.length - 2} escala${paradas.length - 2 > 1 ? "s" : ""}`}
                             </p>
                           </div>
                         );

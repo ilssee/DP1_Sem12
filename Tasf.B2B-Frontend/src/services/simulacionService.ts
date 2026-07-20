@@ -84,6 +84,26 @@ export const registrarPedidoManual = async (
   }
 };
 
+export const cargarPedidosDiariosPorArchivo = async (
+  archivo: File,
+  origen: string,
+  fechaBase?: string,
+): Promise<{ mensaje: string; registros: number }> => {
+  const formData = new FormData();
+  formData.append("archivo", archivo);
+  formData.append("origen", origen);
+  if (fechaBase) formData.append("fechaBase", fechaBase);
+
+  const response = await axios.post<{ mensaje: string; registros: number }>(
+    `${API_BASE_URL}/diario/pedidos-archivo`,
+    formData,
+    {
+      headers: { "Content-Type": "multipart/form-data" },
+    },
+  );
+  return response.data;
+};
+
 export const cancelarVueloDiario = async (claveVuelo: string, horaActual?: string): Promise<{ cancelado: string; fecha: string; mensaje: string }> => {
   const params: Record<string, string> = { claveVuelo };
   if (horaActual) params.horaActual = horaActual;
@@ -125,4 +145,9 @@ export const simularVentanaDiaria = async (
     console.error("Error en la simulación de ventana:", error);
     throw error;
   }
+};
+
+export const obtenerPedidosHoy = async (fechaHoraActual: string): Promise<any[]> => {
+  const response = await axios.get(`${API_BASE_URL}/diario/pedidos-hoy`, { params: { fechaHoraActual } });
+  return response.data;
 };
