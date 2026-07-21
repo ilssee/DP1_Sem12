@@ -356,7 +356,10 @@ public class OperacionesDiariasController {
                 }
                 String horaLlegadaLimaStr = String.format(normalForm, horaLlegadaLima.getHour(), horaLlegadaLima.getMinute(), horaLlegadaLima.getSecond());
 
-                ocupacionEnVivo.merge(frontendKey, value, Integer::sum);
+                // El valor del cache ya es el total del vuelo (acumulado por todos los pedidos).
+                // Usar put en lugar de merge para evitar sumar el total N veces
+                // (una por cada pedido que usa el vuelo), lo que triplicaría el conteo.
+                ocupacionEnVivo.put(frontendKey, value);
                 capacidadesEnVivo.put(claveRutaLima, cap);
                 horasLlegadaEnVivo.put(claveRutaLima, horaLlegadaLimaStr);
 
@@ -383,7 +386,13 @@ public class OperacionesDiariasController {
         respuesta.setOcupacionAeropuertos(ocupacionAeropuertosNorm);
         respuesta.setDetallesEnvios(new HashMap<>(estadoAcumulado.getDetallesEnvios()));
         respuesta.setFechasTramos(new HashMap<>(estadoAcumulado.getFechasTramos()));
-        respuesta.setCapacidadesAeropuertos(estadoAcumulado.getCapacidadesAeropuertos());
+
+        // Llenar capacidadesAeropuertos desde los datos reales de BD (mapaAeros.capacidadMax)
+        Map<String, Integer> capacidadesAeroMap = new HashMap<>();
+        for (Map.Entry<String, Aeropuerto> ae : mapaAeros.entrySet()) {
+            capacidadesAeroMap.put(ae.getKey(), ae.getValue().getCapacidadMax());
+        }
+        respuesta.setCapacidadesAeropuertos(capacidadesAeroMap);
         respuesta.setPedidosReplanificados(replanificados);
         respuesta.getOcupacionVuelos().put("__cancelados__", cancelados.size());
 

@@ -2416,7 +2416,13 @@ function App() {
           <SimulacionDiariaPage
             modoOscuro={modoOscuro}
             onRegistrar={() => setVistaActiva("registro-pedido")}
-            onSolucionUpdate={(sol, min, fecha) => { setSolucionDiaria(sol); setMinutosDiario(min); setFechaDiaria(fecha); }}
+            onSolucionUpdate={(sol, min, fecha) => {
+              // Solo actualiza solucionDiaria cuando hay datos válidos — evita que
+              // pedidosManuales vacío momentáneamente desvincula los drawers del mapa
+              if (sol) setSolucionDiaria(sol);
+              setMinutosDiario(min);
+              setFechaDiaria(fecha);
+            }}
             rutaEnvioSeleccionada={rutaEnvioDiaria}
             onRutaEnvioSeleccionadaClear={() => setRutaEnvioDiaria(null)}
             cancelacionTrigger={cancelacionTriggerDiario}

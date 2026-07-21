@@ -144,17 +144,20 @@ export default function SimulacionDiariaPage({
     }
   };
 
-  // ÚNICO useEffect PARA EL RELOJ Y WEBSOCKET (Los antiguos de localStorage fueron borrados)
+  const debounceVentanaRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   useEffect(() => {
     cargarPedidosDesdeBD(new Date());
 
     const client = new Client({
-      webSocketFactory: () => new SockJS("http://localhost:8080/ws-tasf"), // Asegúrate que el puerto coincida con tu backend
+      webSocketFactory: () => new SockJS("http://localhost:8080/ws-tasf"),
       onConnect: () => {
-        console.log("Conectado a la Orquesta WebSocket 🟢");
         client.subscribe("/topic/operaciones-diarias", () => {
           cargarPedidosDesdeBD(new Date());
-          procesarVentana(new Date());
+          // Debounce: evita que 3 dispositivos llamen al backend simultáneamente.
+          // Cada dispositivo espera 800ms; si llega otro evento en ese tiempo, reinicia.
+          if (debounceVentanaRef.current) clearTimeout(debounceVentanaRef.current);
+          debounceVentanaRef.current = setTimeout(() => procesarVentana(new Date()), 800);
         });
       },
     });
@@ -354,7 +357,13 @@ export default function SimulacionDiariaPage({
       : "Último estado sincronizado";
 
   useEffect(() => {
-    onSolucionUpdate?.(solucionOperativa, minutosHoy, fechaHoy);
+    // Solo propaga cuando hay solución válida — evita borrar solucionDiaria en App.tsx
+    // cuando pedidosManuales se vacía brevemente durante cargarPedidosDesdeBD
+    if (solucionOperativa) {
+      onSolucionUpdate?.(solucionOperativa, minutosHoy, fechaHoy);
+    } else {
+      onSolucionUpdate?.(null, minutosHoy, fechaHoy);
+    }
   }, [solucionOperativa, minutosHoy, fechaHoy]);
 
   useEffect(() => {
