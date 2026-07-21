@@ -237,10 +237,6 @@ public class OperacionesDiariasController {
                 .collect(java.util.stream.Collectors.toList());
 
         Solucion estadoAcumulado = estadoDiarioCache.obtener(fechaInicioSimulacionStr);
-        Map<String, List<Vuelo>> rutasPrevias = new HashMap<>(estadoAcumulado.getRutasAsignadas());
-
-        estadoAcumulado.getOcupacionVuelos().clear();
-        estadoAcumulado.getOcupacionAeropuertos().clear();
 
         List<Pedido> pedidosManualesTotales = jdbc.query(
                 "SELECT p.id_pedido, p.origen, p.destino, p.fecha_registro, p.cantidad_maletas, p.id_cliente " +
@@ -248,35 +244,64 @@ public class OperacionesDiariasController {
                 PEDIDO_MAPPER,
                 horaActualVirtual.minusHours(24));
 
-        Solucion solucionParcial = tabuSearchService.ejecutarOptimizacionConEstado(estadoAcumulado, pedidosManualesTotales, vuelos, aeropuertos, 20);
+        Map<String, Pedido> pedidoMap = pedidosManualesTotales.stream()
+                .collect(Collectors.toMap(Pedido::getIdPedido, p -> p, (a, b) -> a));
 
-        Set<String> replanificados = new HashSet<>();
+        // Pedidos cuya ruta actual usa un vuelo cancelado → hay que re-enrutarlos
+        Set<String> idsAfectados = new HashSet<>();
         if (!clavesCanceladasHoy.isEmpty()) {
-            for (Map.Entry<String, List<Vuelo>> e : rutasPrevias.entrySet()) {
-                String pid = e.getKey();
-                boolean usabaCancelado = e.getValue().stream().anyMatch(v -> {
+            for (Map.Entry<String, List<Vuelo>> e : estadoAcumulado.getRutasAsignadas().entrySet()) {
+                boolean usaCancelado = e.getValue().stream().anyMatch(v -> {
                     Aeropuerto orig = mapaAeros.get(v.getOrigen());
                     int gmt = orig != null ? orig.getGmt() : 0;
-                    java.time.LocalTime horaSalidaLima = v.getHoraSalida().minusHours(gmt).minusHours(5);
-                    String cv = v.getOrigen() + "-" + v.getDestino() + "-" + String.format("%02d:%02d", horaSalidaLima.getHour(), horaSalidaLima.getMinute());
+                    java.time.LocalTime hl = v.getHoraSalida().minusHours(gmt).minusHours(5);
+                    String cv = v.getOrigen() + "-" + v.getDestino() + "-" + String.format("%02d:%02d", hl.getHour(), hl.getMinute());
                     return clavesCanceladasHoy.contains(cv);
                 });
-                if (usabaCancelado) replanificados.add(pid);
+                if (usaCancelado) idsAfectados.add(e.getKey());
             }
-            for (Map.Entry<String, List<Vuelo>> e : solucionParcial.getRutasAsignadas().entrySet()) {
-                String pid = e.getKey();
-                if (replanificados.contains(pid)) continue;
-                List<Vuelo> rutaAnterior = rutasPrevias.get(pid);
-                if (rutaAnterior == null) continue;
-                boolean anteriorUsabaCancelado = rutaAnterior.stream().anyMatch(v -> {
-                    Aeropuerto orig = mapaAeros.get(v.getOrigen());
-                    int gmt = orig != null ? orig.getGmt() : 0;
-                    java.time.LocalTime horaSalidaLima = v.getHoraSalida().minusHours(gmt).minusHours(5);
-                    String cv = v.getOrigen() + "-" + v.getDestino() + "-" + String.format("%02d:%02d", horaSalidaLima.getHour(), horaSalidaLima.getMinute());
-                    return clavesCanceladasHoy.contains(cv);
-                });
-                if (anteriorUsabaCancelado) replanificados.add(pid);
+        }
+
+        // Pedidos que aún no tienen ruta asignada
+        List<Pedido> pedidosNuevos = pedidosManualesTotales.stream()
+                .filter(p -> !estadoAcumulado.getRutasAsignadas().containsKey(p.getIdPedido()))
+                .collect(Collectors.toList());
+
+        // Reconstruir ocupacionVuelos desde las rutas existentes (sin los afectados),
+        // para que el BFS vea la capacidad real antes de enrutar los pedidos nuevos.
+        estadoAcumulado.getOcupacionVuelos().clear();
+        estadoAcumulado.getOcupacionAeropuertos().clear();
+        String fmtKey = "%02d:%02d:%02d";
+        for (Map.Entry<String, List<Vuelo>> entry : estadoAcumulado.getRutasAsignadas().entrySet()) {
+            String pid = entry.getKey();
+            if (idsAfectados.contains(pid)) continue;
+            Pedido p = pedidoMap.get(pid);
+            if (p == null) continue;
+            List<String> fechas = estadoAcumulado.getFechasTramos().getOrDefault(pid, List.of());
+            List<Vuelo> ruta = entry.getValue();
+            for (int i = 0; i < ruta.size() && i < fechas.size(); i++) {
+                Vuelo v = ruta.get(i);
+                String key = v.getOrigen() + "-" + v.getDestino() + "-"
+                        + String.format(fmtKey, v.getHoraSalida().getHour(), v.getHoraSalida().getMinute(), v.getHoraSalida().getSecond())
+                        + "_" + fechas.get(i);
+                estadoAcumulado.getOcupacionVuelos().merge(key, p.getCantidadMaletas(), Integer::sum);
             }
+        }
+
+        // Ejecutar Tabu SOLO sobre pedidos nuevos + afectados por cancelación
+        List<Pedido> pedidosParaTabu = new ArrayList<>(pedidosNuevos);
+        for (String id : idsAfectados) {
+            Pedido p = pedidoMap.get(id);
+            if (p != null) pedidosParaTabu.add(p);
+        }
+
+        Set<String> replanificados = new HashSet<>(idsAfectados);
+        Solucion solucionParcial;
+        if (!pedidosParaTabu.isEmpty()) {
+            solucionParcial = tabuSearchService.ejecutarOptimizacionConEstado(
+                    estadoAcumulado, pedidosParaTabu, vuelos, aeropuertos, 20);
+        } else {
+            solucionParcial = new Solucion();
         }
         solucionParcial.setPedidosReplanificados(replanificados);
 
@@ -286,7 +311,6 @@ public class OperacionesDiariasController {
         estadoAcumulado.getFechasTramos().putAll(solucionParcial.getFechasTramos());
         if (solucionParcial.getDetallesEnvios() != null) estadoAcumulado.getDetallesEnvios().putAll(solucionParcial.getDetallesEnvios());
         if (solucionParcial.getCapacidadesVuelos() != null) estadoAcumulado.getCapacidadesVuelos().putAll(solucionParcial.getCapacidadesVuelos());
-        if (solucionParcial.getCapacidadesAeropuertos() != null) estadoAcumulado.setCapacidadesAeropuertos(solucionParcial.getCapacidadesAeropuertos());
         if (solucionParcial.getHorasLlegada() != null) estadoAcumulado.getHorasLlegada().putAll(solucionParcial.getHorasLlegada());
 
         Map<String, List<Vuelo>> rutasEnVivo = new HashMap<>();
@@ -377,13 +401,53 @@ public class OperacionesDiariasController {
         respuesta.setHorasLlegada(horasLlegadaEnVivo);
         respuesta.setRutasPlanificadas(rutasPlanificadas);
 
-        Map<String, Integer> ocupacionAeropuertosNorm = new HashMap<>();
-        for (Map.Entry<String, Integer> e : estadoAcumulado.getOcupacionAeropuertos().entrySet()) {
-            String codigoRaw = e.getKey();
-            String codigo = codigoRaw.contains("_") ? codigoRaw.substring(0, codigoRaw.indexOf('_')) : codigoRaw;
-            ocupacionAeropuertosNorm.merge(codigo, e.getValue(), Integer::sum);
+        // Ocupación real de aeropuertos: dónde están físicamente las maletas en este instante virtual.
+        // Para cada pedido, recorre su ruta en UTC y determina si está esperando en un aeropuerto
+        // (antes de salir, o en escala) o en tránsito (en vuelo). Solo los que esperan se contabilizan.
+        Map<String, Integer> ocupacionAeropuertosRT = new HashMap<>();
+        for (Map.Entry<String, List<Vuelo>> entry : estadoAcumulado.getRutasAsignadas().entrySet()) {
+            String pedidoId = entry.getKey();
+            List<Vuelo> ruta = entry.getValue();
+            List<String> fechas = estadoAcumulado.getFechasTramos().getOrDefault(pedidoId, List.of());
+            Pedido pedido = pedidoMap.get(pedidoId);
+            if (pedido == null || ruta.isEmpty() || fechas.isEmpty()) continue;
+
+            int maletas = pedido.getCantidadMaletas();
+            String ubicacionActual = ruta.get(0).getOrigen(); // por defecto: en origen, aún no salió
+            boolean enTransito = false;
+
+            for (int i = 0; i < ruta.size() && i < fechas.size(); i++) {
+                Vuelo v = ruta.get(i);
+                Aeropuerto orig = mapaAeros.get(v.getOrigen());
+                Aeropuerto dest = mapaAeros.get(v.getDestino());
+                if (orig == null || dest == null) break;
+
+                long duracion = TimeCalculator.calcularDuracionVueloMinutos(v, orig, dest);
+                LocalDateTime salidaUTC = LocalDateTime.of(java.time.LocalDate.parse(fechas.get(i)), v.getHoraSalida())
+                        .minusHours(orig.getGmt());
+                LocalDateTime llegadaUTC = salidaUTC.plusMinutes(duracion);
+
+                if (horaActualVirtualUtc.isBefore(salidaUTC)) {
+                    // Aún no ha salido en este tramo — las maletas siguen en ubicacionActual
+                    enTransito = false;
+                    break;
+                } else if (horaActualVirtualUtc.isBefore(llegadaUTC)) {
+                    // En vuelo en este tramo
+                    ubicacionActual = null;
+                    enTransito = true;
+                    break;
+                } else {
+                    // Ya aterrizó en el destino de este tramo
+                    ubicacionActual = v.getDestino();
+                    enTransito = false;
+                }
+            }
+
+            if (!enTransito && ubicacionActual != null) {
+                ocupacionAeropuertosRT.merge(ubicacionActual, maletas, Integer::sum);
+            }
         }
-        respuesta.setOcupacionAeropuertos(ocupacionAeropuertosNorm);
+        respuesta.setOcupacionAeropuertos(ocupacionAeropuertosRT);
         respuesta.setDetallesEnvios(new HashMap<>(estadoAcumulado.getDetallesEnvios()));
         respuesta.setFechasTramos(new HashMap<>(estadoAcumulado.getFechasTramos()));
 
