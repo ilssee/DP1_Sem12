@@ -2450,15 +2450,20 @@ function App() {
           <div className={`absolute top-0 right-0 h-full z-[999] bg-slate-900 border-l border-slate-700 shadow-2xl flex flex-col transition-all duration-300 ${panelAlmacenesAbierto && vistaActiva === "dia-a-dia" ? 'w-[780px]' : 'w-0 overflow-hidden'}`}>
             {panelAlmacenesAbierto && vistaActiva === "dia-a-dia" && solucionDiaria && (
               <DrawerAlmacenes resultado={solucionDiaria} minutosVirtualesTotales={minutosDiario} fechaInicioSim={fechaDiaria}
-                onCerrar={() => setPanelAlmacenesAbierto(false)} onSeleccionarAeropuerto={() => {}}
-                ocupacionAeropuertosRT={solucionDiaria.ocupacionAeropuertos ?? {}} />
+                onCerrar={() => { setPanelAlmacenesAbierto(false); setAeropuertoResaltado(null); }}
+                onSeleccionarAeropuerto={setAeropuertoResaltado}
+                aeropuertoExpandir={aeropuertoResaltado}
+                ocupacionAeropuertosRT={solucionDiaria.ocupacionAeropuertos ?? {}}
+                onFiltrados={setAeropuertosFiltrados} />
             )}
           </div>
           {/* Drawer Envíos día a día */}
           <div className={`absolute top-0 right-0 h-full z-[999] bg-slate-900 border-l border-slate-700 shadow-2xl flex flex-col transition-all duration-300 ${panelEnviosAbierto && vistaActiva === "dia-a-dia" ? 'w-[620px]' : 'w-0 overflow-hidden'}`}>
             {panelEnviosAbierto && vistaActiva === "dia-a-dia" && solucionDiaria && (
               <DrawerEnvios resultado={solucionDiaria} minutosVirtualesTotales={minutosDiario} fechaInicioSim={fechaDiaria}
-                onCerrar={() => setPanelEnviosAbierto(false)} onVerVuelo={() => {}} onVerAlmacen={() => {}}
+                onCerrar={() => setPanelEnviosAbierto(false)}
+                onVerVuelo={(key) => { setVueloResaltado(key); setPanelVuelosAbierto(true); setPanelEnviosAbierto(false); setPanelAlmacenesAbierto(false); }}
+                onVerAlmacen={(cod) => { setAeropuertoResaltado(cod); setPanelAlmacenesAbierto(true); setPanelEnviosAbierto(false); setPanelVuelosAbierto(false); }}
                 onVerRutaEnvio={(id) => setRutaEnvioDiaria(prev => prev === id ? null : id)} />
             )}
           </div>
@@ -2466,7 +2471,8 @@ function App() {
           <div className={`absolute top-0 right-0 h-full z-[999] bg-slate-900 border-l border-slate-700 shadow-2xl flex flex-col transition-all duration-300 ${panelVuelosAbierto && vistaActiva === "dia-a-dia" ? 'w-[820px]' : 'w-0 overflow-hidden'}`}>
             {panelVuelosAbierto && vistaActiva === "dia-a-dia" && solucionDiaria && (
               <DrawerVuelos resultado={solucionDiaria} minutosVirtualesTotales={minutosDiario} fechaInicio={fechaDiaria}
-                onSeleccionar={() => {}} onCerrar={() => setPanelVuelosAbierto(false)}
+                onSeleccionar={setVueloResaltado} vueloExpandir={vueloResaltado}
+                onCerrar={() => { setPanelVuelosAbierto(false); setVueloResaltado(null); }}
                 vuelosCancelados={vuelosCanceladosDiario}
                 todoCancelado={true}
                 onCancelarVuelo={async (claveRaw) => {

@@ -72,6 +72,26 @@ const calcularProgresoReal = (
   return (minActual - minSalida) / (minLlegada - minSalida);
 };
 
+// Mercator helpers: Leaflet dibuja polylines en espacio Mercator (pantalla), no en lat/lng lineal.
+// Para que el avión siga exactamente la línea dibujada, se interpola en Y-Mercator y se invierte.
+const latToMercY = (lat: number) =>
+  Math.log(Math.tan(Math.PI / 4 + (lat * Math.PI) / 360));
+const mercYToLat = (y: number) =>
+  ((2 * Math.atan(Math.exp(y)) - Math.PI / 2) * 180) / Math.PI;
+
+const interpolarPosicion = (
+  lat1: number, lng1: number,
+  lat2: number, lng2: number,
+  t: number,
+): [number, number] => {
+  const y1 = latToMercY(lat1);
+  const y2 = latToMercY(lat2);
+  return [
+    mercYToLat(y1 + (y2 - y1) * t),
+    lng1 + (lng2 - lng1) * t,
+  ];
+};
+
 const getPlaneIcon = (
   color: string,
   isSelected: boolean,
@@ -205,9 +225,8 @@ export default function MapArea({
       // 2. Si el valor es negativo (no despega) o mayor/igual a 1 (ya llegó), no lo dibujamos
       if (progresoReal < 0 || progresoReal >= 1) return;
 
-      // 3. Si está volando, interpolamos su posición matemática exacta en el mapa
-      const lat = vuelo.lat1 + (vuelo.lat2 - vuelo.lat1) * progresoReal;
-      const lng = vuelo.lng1 + (vuelo.lng2 - vuelo.lng1) * progresoReal;
+      // 3. Si está volando, interpolamos en espacio Mercator para seguir la polyline de Leaflet
+      const [lat, lng] = interpolarPosicion(vuelo.lat1, vuelo.lng1, vuelo.lat2, vuelo.lng2, progresoReal);
 
       const isSelected = vueloSeleccionado === vuelo.id;
       const isDimmed = vueloSeleccionado !== null && !isSelected;
