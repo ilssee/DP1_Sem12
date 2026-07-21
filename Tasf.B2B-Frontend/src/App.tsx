@@ -2446,6 +2446,11 @@ function App() {
             cancelacionTrigger={cancelacionTriggerDiario}
             toastCancelacionExterno={toastCancelacionDiario}
             onToastCancelacionExternoClear={() => setToastCancelacionDiario(null)}
+            aeropuertoResaltado={vistaActiva === "dia-a-dia" ? aeropuertoResaltado : null}
+            vueloResaltado={vistaActiva === "dia-a-dia" ? vueloResaltado : null}
+            onVueloResaltadoClear={() => setVueloResaltado(null)}
+            onAeropuertoClick={(cod) => { setAeropuertoResaltado(cod); setPanelAlmacenesAbierto(true); setPanelEnviosAbierto(false); setPanelVuelosAbierto(false); }}
+            onVueloClick={(key) => { setVueloResaltado(key); setPanelVuelosAbierto(true); setPanelEnviosAbierto(false); setPanelAlmacenesAbierto(false); }}
           />
           {/* Botones drawers día a día */}
           {solucionDiaria && (

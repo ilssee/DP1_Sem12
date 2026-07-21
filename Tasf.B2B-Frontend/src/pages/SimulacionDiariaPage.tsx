@@ -64,6 +64,11 @@ export default function SimulacionDiariaPage({
   cancelacionTrigger,
   toastCancelacionExterno,
   onToastCancelacionExternoClear,
+  aeropuertoResaltado,
+  vueloResaltado,
+  onVueloResaltadoClear,
+  onAeropuertoClick,
+  onVueloClick,
 }: {
   modoOscuro?: boolean;
   onRegistrar?: () => void;
@@ -73,6 +78,11 @@ export default function SimulacionDiariaPage({
   cancelacionTrigger?: number;
   toastCancelacionExterno?: string | null;
   onToastCancelacionExternoClear?: () => void;
+  aeropuertoResaltado?: string | null;
+  vueloResaltado?: string | null;
+  onVueloResaltadoClear?: () => void;
+  onAeropuertoClick?: (cod: string) => void;
+  onVueloClick?: (key: string) => void;
 }) {
   const [fechaActual, setFechaActual] = useState<Date>(() => new Date());
   const [isPlaying, setIsPlaying] = useState(true);
@@ -422,6 +432,12 @@ export default function SimulacionDiariaPage({
               setRutaEnvioSeleccionada(null);
               onRutaEnvioExternaClear?.();
             }}
+            ocupacionAeropuertosRT={resultadoBackend?.ocupacionAeropuertos ?? {}}
+            aeropuertoResaltado={aeropuertoResaltado}
+            vueloResaltado={vueloResaltado}
+            onVueloResaltadoClear={onVueloResaltadoClear}
+            onAeropuertoClick={onAeropuertoClick}
+            onVueloClick={onVueloClick}
           />
         </section>
 
