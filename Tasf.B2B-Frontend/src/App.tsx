@@ -1423,27 +1423,45 @@ function EnviosPanel({ resultado, minutosVirtualesTotales, fechaInicioSim, vuelo
       entradas = entradas.filter(([, d]) => (d.destino ?? '').toUpperCase().includes(fd));
     }
 
-    // Clasificar cada envío según el estado de su último tramo activo
+    // Clasificar cada envío:
+    // 1. Si algún tramo activo está en vuelo → "vuelo"
+    // 2. Si el último tramo planificado ya pasó su hora de llegada → "completado"
+    // 3. En otro caso → "espera"
     const rutasPlanificadas = resultado?.rutasPlanificadas ?? {};
+    const fechasTramos: Record<string, string[]> = (resultado as any)?.fechasTramos ?? {};
     const grupos: Record<string, any[]> = { vuelo: [], espera: [], completado: [] };
     entradas.forEach(([id, detalle]) => {
-      const tramos: any[] = rutasAsignadas[id] ?? [];
-      if (tramos.length === 0) {
-        grupos.espera.push({ id, detalle, tramosEspera: rutasPlanificadas[id] ?? [] });
+      const tramosActivos: any[] = rutasAsignadas[id] ?? [];
+      const tramosPlaneados: any[] = rutasPlanificadas[id] ?? [];
+
+      if (tramosPlaneados.length === 0) {
+        grupos.espera.push({ id, detalle, tramosEspera: [] });
         return;
       }
-      // Determinar estado: si algún tramo está en vuelo → vuelo; si todos completados → completado; si no → espera
-      let estado = 'completado';
-      for (const v of tramos) {
+
+      // Verificar si hay algún tramo activo en vuelo
+      const hayEnVuelo = tramosActivos.some((v: any) => {
         const fechaSalida = Object.keys(resultado.ocupacionVuelos ?? {})
           .find((k: string) => { const sf = k.split("_")[0]; const p = sf.split("-"); return p[0]===v.origen && p[1]===v.destino && normH(p[2])===normH(v.horaSalida??''); })
           ?.split("_")[1];
-        if (!fechaSalida) { estado = 'espera'; break; }
-        const e = clasificarVuelo(fechaSalida, normH(v.horaSalida), normH(v.horaLlegada), fechaInicioSim, minutosVirtualesTotales);
-        if (e === 'vuelo') { estado = 'vuelo'; break; }
-        if (e === 'espera') { estado = 'espera'; }
+        return fechaSalida && clasificarVuelo(fechaSalida, normH(v.horaSalida), normH(v.horaLlegada), fechaInicioSim, minutosVirtualesTotales) === 'vuelo';
+      });
+      if (hayEnVuelo) {
+        grupos.vuelo.push({ id, detalle, tramosEspera: [] });
+        return;
       }
-      grupos[estado].push({ id, detalle, tramosEspera: estado === 'espera' ? (rutasPlanificadas[id] ?? []) : [] });
+
+      // Verificar si el último tramo planificado ya llegó
+      const fechas = fechasTramos[id] ?? [];
+      const ultimoIdx = tramosPlaneados.length - 1;
+      const ultimoTramo = tramosPlaneados[ultimoIdx];
+      const ultimaFecha = fechas[ultimoIdx];
+      if (ultimaFecha && clasificarVuelo(ultimaFecha, normH(ultimoTramo.horaSalida??''), normH(ultimoTramo.horaLlegada??''), fechaInicioSim, minutosVirtualesTotales) === 'completado') {
+        grupos.completado.push({ id, detalle, tramosEspera: [] });
+        return;
+      }
+
+      grupos.espera.push({ id, detalle, tramosEspera: tramosPlaneados });
     });
     return { todos: entradas, grupos };
   }, [resultado, vueloResaltado, minutosVirtualesTotales, fechaInicioSim, filtroOrigen, filtroDestino]);

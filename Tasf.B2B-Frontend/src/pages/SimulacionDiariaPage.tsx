@@ -284,7 +284,29 @@ export default function SimulacionDiariaPage({
       if (tieneRutaActiva) {
         estado = "en-vuelo";
       } else if (tieneRutaPlanificada) {
-        estado = "asignado";
+        // Verificar si el último tramo ya llegó → pedido completado
+        const tramosPlaneados = solucionOperativa?.rutasPlanificadas?.[pedido.idPedido] ?? [];
+        const fechas: string[] = (solucionOperativa as any)?.fechasTramos?.[pedido.idPedido] ?? [];
+        const ultimoIdx = tramosPlaneados.length - 1;
+        const hoyLima = `${fechaActual.getFullYear()}-${String(fechaActual.getMonth()+1).padStart(2,'0')}-${String(fechaActual.getDate()).padStart(2,'0')}`;
+
+        if (ultimoIdx >= 0 && fechas[ultimoIdx]) {
+          const ult = tramosPlaneados[ultimoIdx];
+          const fechaDep = fechas[ultimoIdx]; // fecha LOCAL de salida del último tramo
+          const minSal = parseHoraAMinutos(ult.horaSalida ?? "00:00");
+          let minLleg = parseHoraAMinutos(ult.horaLlegada ?? "00:00");
+          if (minLleg <= minSal) minLleg += 1440; // cruza medianoche
+
+          if (fechaDep < hoyLima) {
+            estado = "completado"; // el último tramo salió antes de hoy → ya llegó
+          } else if (fechaDep === hoyLima && minutosHoy >= minLleg) {
+            estado = "completado"; // salió hoy y ya pasó su hora de llegada
+          } else {
+            estado = "asignado";
+          }
+        } else {
+          estado = "asignado";
+        }
       } else {
         estado = isProcessingWindow ? "procesando" : "pendiente";
       }
