@@ -1964,6 +1964,53 @@ function ReportePeriodo({ resultado, fechaInicio, dias, onCerrar }: {
   );
 }
 
+function ReporteDropdownBtn({ tienePeriodo, tieneDiaDia, fechaDiaDia, onPeriodo, onDiaDia }: {
+  tienePeriodo: boolean; tieneDiaDia: boolean; fechaDiaDia?: string;
+  onPeriodo: () => void; onDiaDia: () => void;
+}) {
+  const [abierto, setAbierto] = useState(false);
+  const [pos, setPos] = useState<{ top: number; right: number } | null>(null);
+  const btnRef = useRef<HTMLButtonElement>(null);
+
+  const abrir = () => {
+    if (btnRef.current) {
+      const r = btnRef.current.getBoundingClientRect();
+      setPos({ top: r.bottom + 4, right: window.innerWidth - r.right });
+    }
+    setAbierto(v => !v);
+  };
+
+  return (
+    <div>
+      <button ref={btnRef} onClick={abrir}
+        className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-colors text-slate-400 hover:bg-slate-800 hover:text-white">
+        <FileText size={18} /> Último reporte ▾
+      </button>
+      {abierto && pos && (
+        <>
+          <div className="fixed inset-0 z-[900]" onClick={() => setAbierto(false)} />
+          <div className="fixed z-[901] bg-slate-800 border border-slate-600 rounded-lg shadow-xl py-1 min-w-[220px]"
+            style={{ top: pos.top, right: pos.right }}>
+            {tienePeriodo && (
+              <button onClick={() => { onPeriodo(); setAbierto(false); }}
+                className="w-full text-left px-4 py-2.5 text-sm text-slate-300 hover:bg-slate-700 hover:text-white flex items-center gap-2">
+                <FileText size={15} /> Simulación por período
+              </button>
+            )}
+            {tieneDiaDia && (
+              <button onClick={() => { onDiaDia(); setAbierto(false); }}
+                className="w-full text-left px-4 py-2.5 text-sm text-slate-300 hover:bg-slate-700 hover:text-white flex items-center gap-2">
+                <FileText size={15} /> Simulación día a día
+                {fechaDiaDia && <span className="ml-auto text-[10px] text-slate-500">{fechaDiaDia}</span>}
+              </button>
+            )}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 function App() {
   const [vistaActiva, setVistaActiva] = useState<Vista>("dia-a-dia");
   const [headerColapsado, setHeaderColapsado] = useState(false);
@@ -2563,23 +2610,14 @@ function App() {
             >
               ⚙ Aeropuertos
             </button>
-            {reporteGuardado && (
-              <button
-                onClick={() => setMostrarReporte(true)}
-                className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-colors text-slate-400 hover:bg-slate-800 hover:text-white"
-                title="Ver último reporte de simulación por período"
-              >
-                <FileText size={18} /> Último reporte
-              </button>
-            )}
-            {reporteGuardadoDiaDia && (
-              <button
-                onClick={() => setMostrarReporteDiaDia(true)}
-                className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-colors text-slate-400 hover:bg-slate-800 hover:text-white"
-                title="Ver último reporte de simulación día a día"
-              >
-                <FileText size={18} /> Reporte día a día
-              </button>
+            {(reporteGuardado || reporteGuardadoDiaDia) && (
+              <ReporteDropdownBtn
+                tienePeriodo={!!reporteGuardado}
+                tieneDiaDia={!!reporteGuardadoDiaDia}
+                fechaDiaDia={reporteGuardadoDiaDia?.fecha}
+                onPeriodo={() => setMostrarReporte(true)}
+                onDiaDia={() => setMostrarReporteDiaDia(true)}
+              />
             )}
             <button
               onClick={() => setModoOscuro(!modoOscuro)}
