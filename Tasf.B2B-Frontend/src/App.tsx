@@ -1633,6 +1633,155 @@ function RutasPanel({ resultado, minutosVirtualesTotales, fechaInicioSim, vueloR
   );
 }
 
+function ReporteDiaDia({ resultado, fecha, onCerrar }: {
+  resultado: Solucion; fecha: string; onCerrar: () => void;
+}) {
+  const [pagina, setPagina] = useState(0);
+  const [filtroOrigen, setFiltroOrigen] = useState('');
+  const [filtroDestino, setFiltroDestino] = useState('');
+  const [filtroTipo, setFiltroTipo] = useState<'' | 'directo' | 'escalas' | 'sin-ruta'>('');
+  const PAGE_SIZE = 20;
+
+  const envios = useMemo(() => {
+    const detalles = resultado.detallesEnvios ?? {};
+    const rutasPlanificadas = (resultado as any).rutasPlanificadas ?? {};
+    return Object.entries(detalles).map(([id, detalle]: [string, any]) => {
+      const tramos: any[] = rutasPlanificadas[id] ?? [];
+      const tieneRuta = tramos.length > 0;
+      const paradas = tieneRuta ? [tramos[0].origen, ...tramos.map((v: any) => v.destino)] : [];
+      const esDirecto = paradas.length === 2;
+      const escalas = Math.max(0, paradas.length - 2);
+      return { id, idCliente: detalle.idCliente, origen: detalle.origen, destino: detalle.destino, maletas: detalle.cantidadMaletas, tieneRuta, esDirecto, escalas, rutaStr: tieneRuta ? paradas.join(' → ') : '—' };
+    });
+  }, [resultado]);
+
+  const kpis = useMemo(() => {
+    const total = envios.length;
+    const conRuta = envios.filter(e => e.tieneRuta).length;
+    const sinRuta = total - conRuta;
+    const directos = envios.filter(e => e.tieneRuta && e.esDirecto).length;
+    const conEscalas = conRuta - directos;
+    const totalMaletas = envios.reduce((s, e) => s + e.maletas, 0);
+    const capVuelos = resultado.capacidadesVuelos ?? {};
+    let sumPct = 0, countV = 0;
+    Object.entries(resultado.ocupacionVuelos ?? {}).forEach(([key, cant]) => {
+      if (!cant) return;
+      const sf = key.substring(0, key.lastIndexOf('_'));
+      const p = sf.split('-');
+      const clave = `${p[0]}-${p[1]}-${p.slice(2).join(':')}`;
+      const cap = (capVuelos as any)[clave] ?? 350;
+      sumPct += ((cant as number) / cap) * 100; countV++;
+    });
+    const pctVuelos = countV > 0 ? Math.round(sumPct / countV) : 0;
+    const capAeros = resultado.capacidadesAeropuertos ?? {};
+    const ocAeros = resultado.ocupacionAeropuertos ?? {};
+    let sumPctA = 0, countA = 0;
+    Object.entries(ocAeros).forEach(([cod, oc]) => {
+      const cap = (capAeros as any)[cod]; if (!cap) return;
+      sumPctA += ((oc as number) / cap) * 100; countA++;
+    });
+    const pctAeros = countA > 0 ? Math.round(sumPctA / countA) : 0;
+    return { total, conRuta, sinRuta, directos, conEscalas, totalMaletas, pctVuelos, pctAeros };
+  }, [envios, resultado]);
+
+  const filtrados = useMemo(() => {
+    return envios.filter(e => {
+      if (filtroOrigen && !e.origen.toUpperCase().includes(filtroOrigen.toUpperCase())) return false;
+      if (filtroDestino && !e.destino.toUpperCase().includes(filtroDestino.toUpperCase())) return false;
+      if (filtroTipo === 'directo' && !(e.tieneRuta && e.esDirecto)) return false;
+      if (filtroTipo === 'escalas' && !(e.tieneRuta && !e.esDirecto)) return false;
+      if (filtroTipo === 'sin-ruta' && e.tieneRuta) return false;
+      return true;
+    });
+  }, [envios, filtroOrigen, filtroDestino, filtroTipo]);
+
+  useEffect(() => { setPagina(0); }, [filtroOrigen, filtroDestino, filtroTipo]);
+
+  const paginaActual = filtrados.slice(pagina * PAGE_SIZE, (pagina + 1) * PAGE_SIZE);
+  const totalPaginas = Math.ceil(filtrados.length / PAGE_SIZE);
+
+  const kpiCards = [
+    { label: 'Total envíos', value: kpis.total, color: 'text-white' },
+    { label: 'Con ruta asignada', value: `${kpis.conRuta} (${kpis.total > 0 ? Math.round(kpis.conRuta / kpis.total * 100) : 0}%)`, color: 'text-tasf-green' },
+    { label: 'Sin ruta (no atendidos)', value: kpis.sinRuta, color: kpis.sinRuta > 0 ? 'text-red-400' : 'text-slate-400' },
+    { label: 'Total maletas', value: kpis.totalMaletas.toLocaleString(), color: 'text-blue-300' },
+    { label: 'Vuelos directos', value: kpis.directos, color: 'text-tasf-green' },
+    { label: 'Con escalas', value: kpis.conEscalas, color: 'text-yellow-400' },
+    { label: '% Ocupación vuelos (prom.)', value: `${kpis.pctVuelos}%`, color: 'text-slate-300' },
+    { label: '% Ocupación almacenes (prom.)', value: `${kpis.pctAeros}%`, color: 'text-slate-300' },
+  ];
+
+  return (
+    <div className="fixed inset-0 z-[3000] bg-slate-900 flex flex-col overflow-hidden">
+      <div className="bg-slate-800 border-b border-slate-700 px-6 py-4 flex items-center justify-between shrink-0">
+        <div>
+          <h1 className="text-white font-bold text-lg">📊 Reporte — Simulación Día a Día</h1>
+          <p className="text-slate-400 text-xs mt-0.5">Fecha: {fecha}</p>
+        </div>
+        <button onClick={onCerrar} className="text-slate-400 hover:text-white text-2xl leading-none px-2">✕</button>
+      </div>
+      <div className="px-6 py-4 grid grid-cols-4 gap-3 border-b border-slate-700 shrink-0">
+        {kpiCards.map(k => (
+          <div key={k.label} className="bg-slate-800 rounded-xl p-4 border border-slate-700">
+            <p className="text-[10px] text-slate-400 uppercase tracking-widest mb-1">{k.label}</p>
+            <p className={`text-2xl font-bold font-mono ${k.color}`}>{k.value}</p>
+          </div>
+        ))}
+      </div>
+      <div className="px-6 py-3 flex items-center gap-3 border-b border-slate-700 shrink-0">
+        <input value={filtroOrigen} onChange={e => setFiltroOrigen(e.target.value)} placeholder="Origen" className="bg-slate-800 border border-slate-600 text-white text-xs rounded px-2 py-1 w-24" />
+        <input value={filtroDestino} onChange={e => setFiltroDestino(e.target.value)} placeholder="Destino" className="bg-slate-800 border border-slate-600 text-white text-xs rounded px-2 py-1 w-24" />
+        <select value={filtroTipo} onChange={e => setFiltroTipo(e.target.value as any)} className="bg-slate-800 border border-slate-600 text-white text-xs rounded px-2 py-1">
+          <option value="">Todos</option>
+          <option value="directo">Directo</option>
+          <option value="escalas">Con escalas</option>
+          <option value="sin-ruta">Sin ruta</option>
+        </select>
+        <span className="text-slate-400 text-xs ml-auto">{filtrados.length} envíos</span>
+      </div>
+      <div className="flex-1 overflow-auto px-6 py-2">
+        <table className="w-full text-xs text-slate-300">
+          <thead>
+            <tr className="text-slate-500 uppercase text-[10px] border-b border-slate-700">
+              <th className="text-left py-2 pr-3">ID Envío</th>
+              <th className="text-left py-2 pr-3">Cliente</th>
+              <th className="text-left py-2 pr-3">Origen</th>
+              <th className="text-left py-2 pr-3">Destino</th>
+              <th className="text-right py-2 pr-3">Maletas</th>
+              <th className="text-left py-2 pr-3">Tipo</th>
+              <th className="text-left py-2">Ruta</th>
+            </tr>
+          </thead>
+          <tbody>
+            {paginaActual.map(e => (
+              <tr key={e.id} className="border-b border-slate-800 hover:bg-slate-800/50">
+                <td className="py-1.5 pr-3 font-mono text-white">{e.id}</td>
+                <td className="py-1.5 pr-3">{e.idCliente}</td>
+                <td className="py-1.5 pr-3">{e.origen}</td>
+                <td className="py-1.5 pr-3">{e.destino}</td>
+                <td className="py-1.5 pr-3 text-right">{e.maletas}</td>
+                <td className="py-1.5 pr-3">
+                  {!e.tieneRuta ? <span className="text-red-400">Sin ruta</span>
+                    : e.esDirecto ? <span className="text-tasf-green">Directo</span>
+                    : <span className="text-yellow-400">{e.escalas} escala{e.escalas !== 1 ? 's' : ''}</span>}
+                </td>
+                <td className="py-1.5 font-mono text-slate-400">{e.rutaStr}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {totalPaginas > 1 && (
+        <div className="px-6 py-3 border-t border-slate-700 flex items-center justify-between shrink-0">
+          <button onClick={() => setPagina(p => Math.max(0, p - 1))} disabled={pagina === 0} className="text-xs px-3 py-1 rounded bg-slate-800 border border-slate-600 text-slate-300 disabled:opacity-40">← Anterior</button>
+          <span className="text-xs text-slate-400">Página {pagina + 1} de {totalPaginas}</span>
+          <button onClick={() => setPagina(p => Math.min(totalPaginas - 1, p + 1))} disabled={pagina === totalPaginas - 1} className="text-xs px-3 py-1 rounded bg-slate-800 border border-slate-600 text-slate-300 disabled:opacity-40">Siguiente →</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ReportePeriodo({ resultado, fechaInicio, dias, onCerrar }: {
   resultado: Solucion; fechaInicio: string; dias: number; onCerrar: () => void;
 }) {
@@ -1867,6 +2016,13 @@ function App() {
   const [reporteGuardado, setReporteGuardado] = useState<{ resultado: Solucion; fechaInicio: string; dias: number } | null>(() => {
     try {
       const raw = localStorage.getItem('tasfb2b_ultimo_reporte');
+      return raw ? JSON.parse(raw) : null;
+    } catch { return null; }
+  });
+  const [mostrarReporteDiaDia, setMostrarReporteDiaDia] = useState(false);
+  const [reporteGuardadoDiaDia, setReporteGuardadoDiaDia] = useState<{ resultado: Solucion; fecha: string } | null>(() => {
+    try {
+      const raw = localStorage.getItem('tasfb2b_ultimo_reporte_diadia');
       return raw ? JSON.parse(raw) : null;
     } catch { return null; }
   });
@@ -2411,9 +2567,18 @@ function App() {
               <button
                 onClick={() => setMostrarReporte(true)}
                 className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-colors text-slate-400 hover:bg-slate-800 hover:text-white"
-                title="Ver último reporte guardado"
+                title="Ver último reporte de simulación por período"
               >
                 <FileText size={18} /> Último reporte
+              </button>
+            )}
+            {reporteGuardadoDiaDia && (
+              <button
+                onClick={() => setMostrarReporteDiaDia(true)}
+                className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-colors text-slate-400 hover:bg-slate-800 hover:text-white"
+                title="Ver último reporte de simulación día a día"
+              >
+                <FileText size={18} /> Reporte día a día
               </button>
             )}
             <button
@@ -2466,6 +2631,17 @@ function App() {
               <button onClick={() => { setPanelVuelosAbierto(v => !v); setPanelAlmacenesAbierto(false); setPanelEnviosAbierto(false); }}
                 className={`text-xs font-bold px-3 py-1.5 rounded-lg border flex items-center gap-2 transition-colors ${panelVuelosAbierto ? 'bg-slate-700 border-slate-500 text-white' : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-600'}`}>
                 ✈ Vuelos {panelVuelosAbierto ? '▶' : '◀'}
+              </button>
+              <button
+                onClick={() => {
+                  const entrada = { resultado: solucionDiaria, fecha: fechaDiaria };
+                  try { localStorage.setItem('tasfb2b_ultimo_reporte_diadia', JSON.stringify(entrada)); } catch {}
+                  setReporteGuardadoDiaDia(entrada);
+                  setMostrarReporteDiaDia(true);
+                }}
+                className="text-xs font-bold px-3 py-1.5 rounded-lg border flex items-center gap-2 transition-colors bg-slate-800 hover:bg-slate-700 text-tasf-green border-tasf-green/40"
+              >
+                📊 Reporte
               </button>
             </div>
           )}
@@ -3143,6 +3319,14 @@ function App() {
           fechaInicio={resultado ? fechaInicio : reporteGuardado!.fechaInicio}
           dias={resultado ? dias : reporteGuardado!.dias}
           onCerrar={() => setMostrarReporte(false)}
+        />
+      )}
+      {/* Reporte día a día */}
+      {mostrarReporteDiaDia && reporteGuardadoDiaDia && (
+        <ReporteDiaDia
+          resultado={reporteGuardadoDiaDia.resultado}
+          fecha={reporteGuardadoDiaDia.fecha}
+          onCerrar={() => setMostrarReporteDiaDia(false)}
         />
       )}
     </div>
