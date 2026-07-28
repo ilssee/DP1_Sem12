@@ -1964,9 +1964,151 @@ function ReportePeriodo({ resultado, fechaInicio, dias, onCerrar }: {
   );
 }
 
-function ReporteDropdownBtn({ tienePeriodo, tieneDiaDia, fechaDiaDia, onPeriodo, onDiaDia }: {
-  tienePeriodo: boolean; tieneDiaDia: boolean; fechaDiaDia?: string;
-  onPeriodo: () => void; onDiaDia: () => void;
+function ReporteColapso({ resultado, momentoColapso, motivoColapso, onCerrar }: {
+  resultado: Solucion; momentoColapso: string; motivoColapso: string; onCerrar: () => void;
+}) {
+  const [pagina, setPagina] = useState(0);
+  const [filtroOrigen, setFiltroOrigen] = useState('');
+  const [filtroDestino, setFiltroDestino] = useState('');
+  const [filtroTipo, setFiltroTipo] = useState<'' | 'directo' | 'escalas' | 'sin-ruta'>('');
+  const PAGE_SIZE = 20;
+
+  const envios = useMemo(() => {
+    const detalles = resultado.detallesEnvios ?? {};
+    const rutasPlanificadas = (resultado as any).rutasPlanificadas ?? {};
+    return Object.entries(detalles).map(([id, detalle]: [string, any]) => {
+      const tramos: any[] = rutasPlanificadas[id] ?? [];
+      const tieneRuta = tramos.length > 0;
+      const paradas = tieneRuta ? [tramos[0].origen, ...tramos.map((v: any) => v.destino)] : [];
+      const esDirecto = paradas.length === 2;
+      const escalas = Math.max(0, paradas.length - 2);
+      return { id, idCliente: detalle.idCliente, origen: detalle.origen, destino: detalle.destino, maletas: detalle.cantidadMaletas, tieneRuta, esDirecto, escalas, rutaStr: tieneRuta ? paradas.join(' → ') : '—' };
+    });
+  }, [resultado]);
+
+  const kpis = useMemo(() => {
+    const total = envios.length;
+    const conRuta = envios.filter(e => e.tieneRuta).length;
+    const sinRuta = total - conRuta;
+    const directos = envios.filter(e => e.tieneRuta && e.esDirecto).length;
+    const conEscalas = conRuta - directos;
+    const totalMaletas = envios.reduce((s, e) => s + e.maletas, 0);
+    const tasaExito = typeof resultado.tasaExito === 'number' ? resultado.tasaExito.toFixed(1) : '—';
+    const capAeros = resultado.capacidadesAeropuertos ?? {};
+    const ocAeros = resultado.ocupacionAeropuertos ?? {};
+    let sumPctA = 0, countA = 0;
+    Object.entries(ocAeros).forEach(([cod, oc]) => {
+      const cap = (capAeros as any)[cod]; if (!cap) return;
+      sumPctA += ((oc as number) / cap) * 100; countA++;
+    });
+    const pctAeros = countA > 0 ? Math.round(sumPctA / countA) : 0;
+    return { total, conRuta, sinRuta, directos, conEscalas, totalMaletas, tasaExito, pctAeros };
+  }, [envios, resultado]);
+
+  const filtrados = useMemo(() => {
+    return envios.filter(e => {
+      if (filtroOrigen && !e.origen.toUpperCase().includes(filtroOrigen.toUpperCase())) return false;
+      if (filtroDestino && !e.destino.toUpperCase().includes(filtroDestino.toUpperCase())) return false;
+      if (filtroTipo === 'directo' && !(e.tieneRuta && e.esDirecto)) return false;
+      if (filtroTipo === 'escalas' && !(e.tieneRuta && !e.esDirecto)) return false;
+      if (filtroTipo === 'sin-ruta' && e.tieneRuta) return false;
+      return true;
+    });
+  }, [envios, filtroOrigen, filtroDestino, filtroTipo]);
+
+  useEffect(() => { setPagina(0); }, [filtroOrigen, filtroDestino, filtroTipo]);
+
+  const paginaActual = filtrados.slice(pagina * PAGE_SIZE, (pagina + 1) * PAGE_SIZE);
+  const totalPaginas = Math.ceil(filtrados.length / PAGE_SIZE);
+
+  const kpiCards = [
+    { label: 'Total envíos', value: kpis.total, color: 'text-white' },
+    { label: 'Con ruta asignada', value: `${kpis.conRuta} (${kpis.total > 0 ? Math.round(kpis.conRuta / kpis.total * 100) : 0}%)`, color: 'text-orange-300' },
+    { label: 'Sin ruta (no atendidos)', value: kpis.sinRuta, color: kpis.sinRuta > 0 ? 'text-red-400' : 'text-slate-400' },
+    { label: 'Total maletas', value: kpis.totalMaletas.toLocaleString(), color: 'text-blue-300' },
+    { label: 'Vuelos directos', value: kpis.directos, color: 'text-orange-300' },
+    { label: 'Con escalas', value: kpis.conEscalas, color: 'text-yellow-400' },
+    { label: 'Tasa de éxito al colapso', value: `${kpis.tasaExito}%`, color: 'text-red-400' },
+    { label: '% Ocupación almacenes (prom.)', value: `${kpis.pctAeros}%`, color: 'text-orange-300' },
+  ];
+
+  return (
+    <div className="fixed inset-0 z-[3000] bg-slate-900 flex flex-col overflow-hidden">
+      <div className="bg-orange-950 border-b border-orange-800 px-6 py-4 flex items-center justify-between shrink-0">
+        <div>
+          <h1 className="text-white font-bold text-lg flex items-center gap-2">
+            <OctagonAlert size={20} className="text-orange-400" /> Reporte — Simulación hasta Colapso
+          </h1>
+          <p className="text-orange-300 text-xs mt-0.5">Colapso detectado: {momentoColapso}</p>
+          <p className="text-orange-200/70 text-xs">{motivoColapso}</p>
+        </div>
+        <button onClick={onCerrar} className="text-slate-400 hover:text-white text-2xl leading-none px-2">✕</button>
+      </div>
+      <div className="px-6 py-4 grid grid-cols-4 gap-3 border-b border-slate-700 shrink-0">
+        {kpiCards.map(k => (
+          <div key={k.label} className="bg-slate-800 rounded-xl p-4 border border-slate-700">
+            <p className="text-[10px] text-slate-400 uppercase tracking-widest mb-1">{k.label}</p>
+            <p className={`text-2xl font-bold font-mono ${k.color}`}>{k.value}</p>
+          </div>
+        ))}
+      </div>
+      <div className="px-6 py-3 flex items-center gap-3 border-b border-slate-700 shrink-0">
+        <input value={filtroOrigen} onChange={e => setFiltroOrigen(e.target.value)} placeholder="Origen" className="bg-slate-800 border border-slate-600 text-white text-xs rounded px-2 py-1 w-24" />
+        <input value={filtroDestino} onChange={e => setFiltroDestino(e.target.value)} placeholder="Destino" className="bg-slate-800 border border-slate-600 text-white text-xs rounded px-2 py-1 w-24" />
+        <select value={filtroTipo} onChange={e => setFiltroTipo(e.target.value as any)} className="bg-slate-800 border border-slate-600 text-white text-xs rounded px-2 py-1">
+          <option value="">Todos</option>
+          <option value="directo">Directo</option>
+          <option value="escalas">Con escalas</option>
+          <option value="sin-ruta">Sin ruta</option>
+        </select>
+        <span className="text-slate-400 text-xs ml-auto">{filtrados.length} envíos</span>
+      </div>
+      <div className="flex-1 overflow-auto px-6 py-2">
+        <table className="w-full text-xs text-slate-300">
+          <thead>
+            <tr className="text-slate-500 uppercase text-[10px] border-b border-slate-700">
+              <th className="text-left py-2 pr-3">ID Envío</th>
+              <th className="text-left py-2 pr-3">Cliente</th>
+              <th className="text-left py-2 pr-3">Origen</th>
+              <th className="text-left py-2 pr-3">Destino</th>
+              <th className="text-right py-2 pr-3">Maletas</th>
+              <th className="text-left py-2 pr-3">Tipo</th>
+              <th className="text-left py-2">Ruta</th>
+            </tr>
+          </thead>
+          <tbody>
+            {paginaActual.map(e => (
+              <tr key={e.id} className="border-b border-slate-800 hover:bg-slate-800/50">
+                <td className="py-1.5 pr-3 font-mono text-white">{e.id}</td>
+                <td className="py-1.5 pr-3">{e.idCliente}</td>
+                <td className="py-1.5 pr-3">{e.origen}</td>
+                <td className="py-1.5 pr-3">{e.destino}</td>
+                <td className="py-1.5 pr-3 text-right">{e.maletas}</td>
+                <td className="py-1.5 pr-3">
+                  {!e.tieneRuta ? <span className="text-red-400">Sin ruta</span>
+                    : e.esDirecto ? <span className="text-orange-300">Directo</span>
+                    : <span className="text-yellow-400">{e.escalas} escala{e.escalas !== 1 ? 's' : ''}</span>}
+                </td>
+                <td className="py-1.5 font-mono text-slate-400">{e.rutaStr}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {totalPaginas > 1 && (
+        <div className="px-6 py-3 border-t border-slate-700 flex items-center justify-between shrink-0">
+          <button onClick={() => setPagina(p => Math.max(0, p - 1))} disabled={pagina === 0} className="text-xs px-3 py-1 rounded bg-slate-800 border border-slate-600 text-slate-300 disabled:opacity-40">← Anterior</button>
+          <span className="text-xs text-slate-400">Página {pagina + 1} de {totalPaginas}</span>
+          <button onClick={() => setPagina(p => Math.min(totalPaginas - 1, p + 1))} disabled={pagina === totalPaginas - 1} className="text-xs px-3 py-1 rounded bg-slate-800 border border-slate-600 text-slate-300 disabled:opacity-40">Siguiente →</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ReporteDropdownBtn({ tienePeriodo, tieneDiaDia, tieneColapso, fechaDiaDia, onPeriodo, onDiaDia, onColapso }: {
+  tienePeriodo: boolean; tieneDiaDia: boolean; tieneColapso: boolean; fechaDiaDia?: string;
+  onPeriodo: () => void; onDiaDia: () => void; onColapso: () => void;
 }) {
   const [abierto, setAbierto] = useState(false);
   const [pos, setPos] = useState<{ top: number; right: number } | null>(null);
@@ -2002,6 +2144,12 @@ function ReporteDropdownBtn({ tienePeriodo, tieneDiaDia, fechaDiaDia, onPeriodo,
                 className="w-full text-left px-4 py-2.5 text-sm text-slate-300 hover:bg-slate-700 hover:text-white flex items-center gap-2">
                 <FileText size={15} /> Simulación día a día
                 {fechaDiaDia && <span className="ml-auto text-[10px] text-slate-500">{fechaDiaDia}</span>}
+              </button>
+            )}
+            {tieneColapso && (
+              <button onClick={() => { onColapso(); setAbierto(false); }}
+                className="w-full text-left px-4 py-2.5 text-sm text-orange-300 hover:bg-slate-700 hover:text-orange-200 flex items-center gap-2">
+                <OctagonAlert size={15} /> Simulación hasta colapso
               </button>
             )}
           </div>
@@ -2073,6 +2221,13 @@ function App() {
       return raw ? JSON.parse(raw) : null;
     } catch { return null; }
   });
+  const [mostrarReporteColapso, setMostrarReporteColapso] = useState(false);
+  const [reporteGuardadoColapso, setReporteGuardadoColapso] = useState<{ resultado: Solucion; momentoColapso: string; motivoColapso: string } | null>(() => {
+    try {
+      const raw = localStorage.getItem('tasfb2b_ultimo_reporte_colapso');
+      return raw ? JSON.parse(raw) : null;
+    } catch { return null; }
+  });
   const inicioRealRef = useRef<number | null>(null);
 
   // ── ESTADOS COLAPSO ──
@@ -2081,6 +2236,7 @@ function App() {
   const [momentoColapso, setMomentoColapso] = useState<string | null>(null);
   const [fechaInicioColapso, setFechaInicioColapso] = useState("2026-01-05");
   const [horaInicioColapso, setHoraInicioColapso] = useState("00:00");
+  const [simulandoColapso, setSimulandoColapso] = useState(false);
   const jobIdColapsoRef = useRef<string | null>(null);
   const intervalColapsoRef = useRef<number | null>(null);
 
@@ -2229,7 +2385,7 @@ function App() {
     if (!simulandoEnVivo) return;
 
     // Reloj virtual: actualiza cada 250ms → posiciones de aviones fluidas
-    const esColapso = vistaActiva === "colapso";
+    const esColapso = vistaActiva === "colapso" && simulandoColapso;
     const intervaloVirtual = setInterval(() => {
       const ahora = Date.now();
       let minVirtuales: number;
@@ -2271,7 +2427,7 @@ function App() {
     }, 1000);
 
     return () => { clearInterval(intervaloVirtual); clearInterval(intervaloReal); };
-  }, [simulandoEnVivo, vistaActiva, fechaInicioColapso]);
+  }, [simulandoEnVivo, simulandoColapso, vistaActiva, fechaInicioColapso]);
 
   useEffect(() => { fechaInicioRef.current = fechaInicio; }, [fechaInicio]);
   useEffect(() => { horaInicioRef.current = horaInicio; }, [horaInicio]);
@@ -2333,6 +2489,7 @@ function App() {
     if (intervalColapsoRef.current !== null) { clearInterval(intervalColapsoRef.current); intervalColapsoRef.current = null; }
     setResultado(null);
     setSimulandoEnVivo(false);
+    setSimulandoColapso(false);
     setPorcentajeSimulacion(0);
     setVentanaVirtual(null);
     setMinutosVirtualesTotales(0);
@@ -2353,6 +2510,7 @@ function App() {
       inicioRealRef.current = Date.now();
       setCargando(false);
       setSimulandoEnVivo(true);
+      setSimulandoColapso(true);
       setProcesandoPrimerBloque(true);
 
       const fechaInicioSimDate = new Date(fechaInicioSimStr);
@@ -2404,6 +2562,7 @@ function App() {
                   + " " + d.toLocaleTimeString("es-PE", { hour12:false, hour:"2-digit", minute:"2-digit" });
                 setMomentoColapso(fmt(fechaColapsoReal));
                 setSimulandoEnVivo(false);
+                setSimulandoColapso(false);
                 detenerSimulacion(jobId).catch(() => {});
               }
               return merged;
@@ -2415,8 +2574,9 @@ function App() {
             clearInterval(intervalColapsoRef.current!);
             intervalColapsoRef.current = null;
             setSimulandoEnVivo(false);
+            setSimulandoColapso(false);
           }
-        } catch { completado = true; clearInterval(intervalColapsoRef.current!); intervalColapsoRef.current = null; setSimulandoEnVivo(false); }
+        } catch { completado = true; clearInterval(intervalColapsoRef.current!); intervalColapsoRef.current = null; setSimulandoEnVivo(false); setSimulandoColapso(false); }
       };
 
       await consultar();
@@ -2610,13 +2770,15 @@ function App() {
             >
               ⚙ Aeropuertos
             </button>
-            {(reporteGuardado || reporteGuardadoDiaDia) && (
+            {(reporteGuardado || reporteGuardadoDiaDia || reporteGuardadoColapso) && (
               <ReporteDropdownBtn
                 tienePeriodo={!!reporteGuardado}
                 tieneDiaDia={!!reporteGuardadoDiaDia}
+                tieneColapso={!!reporteGuardadoColapso}
                 fechaDiaDia={reporteGuardadoDiaDia?.fecha}
                 onPeriodo={() => setMostrarReporte(true)}
                 onDiaDia={() => setMostrarReporteDiaDia(true)}
+                onColapso={() => setMostrarReporteColapso(true)}
               />
             )}
             <button
@@ -3054,19 +3216,19 @@ function App() {
                   <div className="flex gap-2">
                     <input type="date" className="flex-1 bg-white text-tasf-dark p-2 rounded text-sm outline-none"
                       value={fechaInicioColapso} onChange={e => setFechaInicioColapso(e.target.value)}
-                      disabled={cargando || simulandoEnVivo} />
+                      disabled={cargando || simulandoColapso} />
                     <input type="time" className="w-24 bg-white text-tasf-dark p-2 rounded text-sm outline-none"
                       value={horaInicioColapso} onChange={e => setHoraInicioColapso(e.target.value)}
-                      disabled={cargando || simulandoEnVivo} />
+                      disabled={cargando || simulandoColapso} />
                   </div>
                 </div>
                 <div className="rounded-lg border border-orange-500/30 bg-orange-500/10 p-3 text-xs text-orange-200">
                   Sin fecha fin — la simulación corre hasta detectar colapso logístico.
                 </div>
-                <button onClick={handleSimularColapso} disabled={cargando || simulandoEnVivo}
+                <button onClick={handleSimularColapso} disabled={cargando || simulandoColapso}
                   className="w-full bg-orange-500 hover:bg-orange-600 disabled:bg-slate-600 text-white font-bold py-3 rounded transition-colors mt-2 shadow-lg flex justify-center items-center gap-2">
                   {cargando ? <><Loader2 className="animate-spin" size={20}/> CALCULANDO...</>
-                    : simulandoEnVivo ? <><Loader2 className="animate-spin" size={20}/> SIMULANDO...</>
+                    : simulandoColapso ? <><Loader2 className="animate-spin" size={20}/> SIMULANDO...</>
                     : "INICIAR HASTA COLAPSO"}
                 </button>
                 {/* Estado colapso */}
@@ -3077,9 +3239,22 @@ function App() {
                     </p>
                     <p className="text-orange-200 text-xs">{motivoColapso}</p>
                     {momentoColapso && <p className="text-slate-400 text-xs">Momento: <span className="text-white font-mono">{momentoColapso}</span></p>}
+                    {resultado && (
+                      <button
+                        onClick={() => {
+                          const entrada = { resultado, momentoColapso: momentoColapso ?? '', motivoColapso };
+                          try { localStorage.setItem('tasfb2b_ultimo_reporte_colapso', JSON.stringify(entrada)); } catch {}
+                          setReporteGuardadoColapso(entrada);
+                          setMostrarReporteColapso(true);
+                        }}
+                        className="w-full text-xs font-bold px-3 py-1.5 rounded-lg border flex items-center justify-center gap-2 transition-colors bg-orange-900/50 hover:bg-orange-900 text-orange-300 border-orange-500/40 mt-1"
+                      >
+                        📊 Ver reporte
+                      </button>
+                    )}
                   </div>
                 )}
-                {simulandoEnVivo && !colapsoDetectado && (
+                {simulandoColapso && !colapsoDetectado && (
                   <div className="rounded-lg border border-slate-700 bg-slate-800 p-3 space-y-2">
                     <p className="text-xs text-slate-400 uppercase tracking-widest">Estado</p>
                     <p className="text-xs text-slate-200">{ventanaVirtual ?? "Procesando..."}</p>
@@ -3095,7 +3270,7 @@ function App() {
 
           {/* Mismo main que período */}
           <main className="flex-1 flex flex-col relative z-10 overflow-hidden">
-            {(resultado || (porcentajeSimulacion > 0)) && (
+            {(simulandoColapso || colapsoDetectado) && (
               <div className="bg-slate-900 border-b border-slate-700 px-3 py-1.5 flex gap-2 items-center shrink-0 z-[1000]">
                 <button onClick={() => { setPanelAlmacenesAbierto(v => !v); setPanelEnviosAbierto(false); setPanelVuelosAbierto(false); }}
                   className={`text-xs font-bold px-3 py-1.5 rounded-lg border flex items-center gap-2 transition-colors ${panelAlmacenesAbierto ? 'bg-slate-700 border-slate-500 text-white' : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-600'}`}>
@@ -3109,7 +3284,7 @@ function App() {
                   className={`text-xs font-bold px-3 py-1.5 rounded-lg border flex items-center gap-2 transition-colors ${panelVuelosAbierto ? 'bg-slate-700 border-slate-500 text-white' : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-600'}`}>
                   ✈ Vuelos {panelVuelosAbierto ? '▶' : '◀'}
                 </button>
-                {simulandoEnVivo && (
+                {simulandoColapso && (
                   <div className="ml-auto flex items-center gap-2 text-xs text-slate-400">
                     <span className="w-1.5 h-1.5 rounded-full bg-orange-400 animate-pulse" />
                     <span>{Math.floor(minutosVirtualesTotales / 1440)} días simulados</span>
@@ -3118,13 +3293,13 @@ function App() {
               </div>
             )}
             <div className="flex-1 bg-slate-200 relative">
-              {simulandoEnVivo && (
+              {simulandoColapso && (
                 <WidgetTiempos horaRealActual={horaRealActual} tiempoTranscurrido={tiempoTranscurrido}
                   tiempoSimuladoTranscurrido={tiempoSimuladoTranscurrido}
                   minutosVirtualesTotales={minutosVirtualesTotales} horaInicio={horaInicioColapso} />
               )}
-              <MapArea solucion={resultadoFiltrado} progreso={porcentajeSimulacion} modoOscuro={modoOscuro}
-                horaVirtualMinutos={horaVirtualMinutos} minutosVirtualesTotales={minutosVirtualesTotales}
+              <MapArea solucion={simulandoColapso || colapsoDetectado ? resultadoFiltrado : null} progreso={simulandoColapso ? porcentajeSimulacion : 0} modoOscuro={modoOscuro}
+                horaVirtualMinutos={simulandoColapso ? horaVirtualMinutos : 0} minutosVirtualesTotales={simulandoColapso ? minutosVirtualesTotales : 0}
                 fechaInicioSim={fechaInicioColapso} vueloResaltado={vistaActiva === "colapso" ? vueloResaltado : null}
                 onVueloResaltadoClear={() => setVueloResaltado(null)}
                 aeropuertoResaltado={vistaActiva === "colapso" ? aeropuertoResaltado : null} ocupacionAeropuertosRT={ocupacionAeropuertosRT}
@@ -3365,6 +3540,15 @@ function App() {
           resultado={reporteGuardadoDiaDia.resultado}
           fecha={reporteGuardadoDiaDia.fecha}
           onCerrar={() => setMostrarReporteDiaDia(false)}
+        />
+      )}
+      {/* Reporte colapso */}
+      {mostrarReporteColapso && reporteGuardadoColapso && (
+        <ReporteColapso
+          resultado={reporteGuardadoColapso.resultado}
+          momentoColapso={reporteGuardadoColapso.momentoColapso}
+          motivoColapso={reporteGuardadoColapso.motivoColapso}
+          onCerrar={() => setMostrarReporteColapso(false)}
         />
       )}
     </div>
