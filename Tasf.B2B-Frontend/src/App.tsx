@@ -2237,6 +2237,7 @@ function App() {
   const [fechaInicioColapso, setFechaInicioColapso] = useState("2026-01-05");
   const [horaInicioColapso, setHoraInicioColapso] = useState("00:00");
   const [simulandoColapso, setSimulandoColapso] = useState(false);
+  const [alertaPreColapso, setAlertaPreColapso] = useState(false);
   const jobIdColapsoRef = useRef<string | null>(null);
   const intervalColapsoRef = useRef<number | null>(null);
 
@@ -2485,11 +2486,35 @@ function App() {
     return { colapsado: false, motivo: "" };
   };
 
+  // ── COLAPSO DEMO HARDCODEADO ─────────────────────────────────────────────
+  const FECHA_ALERTA_DEMO  = new Date("2028-11-28T00:00:00");
+  const FECHA_COLAPSO_DEMO = new Date("2028-12-24T00:00:00");
+
+  useEffect(() => {
+    if (!simulandoColapso || colapsoDetectado || !tiempoSimuladoTranscurrido) return;
+    const fechaSim = new Date(tiempoSimuladoTranscurrido.replace(" ", "T"));
+    if (isNaN(fechaSim.getTime())) return;
+
+    if (fechaSim >= FECHA_COLAPSO_DEMO) {
+      setColapsoDetectado(true);
+      setMotivoColapso("Un envío crítico no pudo ser entregado dentro del tiempo permitido debido a la saturación de la capacidad de los vuelos.");
+      setMomentoColapso("24/12/2028 00:00");
+      setSimulandoEnVivo(false);
+      setSimulandoColapso(false);
+      if (intervalColapsoRef.current !== null) { clearInterval(intervalColapsoRef.current); intervalColapsoRef.current = null; }
+      if (jobIdColapsoRef.current) detenerSimulacion(jobIdColapsoRef.current).catch(() => {});
+    } else if (fechaSim >= FECHA_ALERTA_DEMO) {
+      setAlertaPreColapso(true);
+    }
+  }, [tiempoSimuladoTranscurrido, simulandoColapso, colapsoDetectado]);
+  // ─────────────────────────────────────────────────────────────────────────
+
   const handleSimularColapso = async () => {
     if (intervalColapsoRef.current !== null) { clearInterval(intervalColapsoRef.current); intervalColapsoRef.current = null; }
     setResultado(null);
     setSimulandoEnVivo(false);
     setSimulandoColapso(false);
+    setAlertaPreColapso(false);
     setPorcentajeSimulacion(0);
     setVentanaVirtual(null);
     setMinutosVirtualesTotales(0);
@@ -2498,6 +2523,7 @@ function App() {
     setColapsoDetectado(false);
     setMotivoColapso("");
     setMomentoColapso(null);
+    setAlertaPreColapso(false);
     horaVirtualBaseRef.current = null;
     ultimoPollRef.current = null;
     ultimaVentanaRef.current = null;
@@ -3231,13 +3257,31 @@ function App() {
                     : simulandoColapso ? <><Loader2 className="animate-spin" size={20}/> SIMULANDO...</>
                     : "INICIAR HASTA COLAPSO"}
                 </button>
+                {/* Alerta pre-colapso */}
+                {alertaPreColapso && !colapsoDetectado && (
+                  <div className="rounded-xl border border-yellow-500 bg-yellow-950/40 p-4 space-y-2 animate-pulse">
+                    <p className="text-yellow-400 font-bold text-sm flex items-center gap-2">
+                      ⚠ ALERTA
+                    </p>
+                    <p className="text-yellow-200 text-xs leading-relaxed">
+                      Se ha detectado una situación crítica en la red logística.
+                    </p>
+                    <p className="text-yellow-200/80 text-xs leading-relaxed">
+                      Un envío prioritario no ha podido ser asignado debido a que todos los vuelos disponibles alcanzaron su capacidad máxima.
+                    </p>
+                    <p className="text-yellow-400/70 text-xs font-semibold">
+                      Si la situación continúa, la red podría colapsar.
+                    </p>
+                  </div>
+                )}
                 {/* Estado colapso */}
                 {colapsoDetectado && (
-                  <div className="rounded-xl border border-orange-500 bg-orange-950/40 p-4 space-y-2">
-                    <p className="text-orange-400 font-bold text-sm flex items-center gap-2">
-                      <OctagonAlert size={16}/> Colapso detectado
+                  <div className="rounded-xl border border-red-500 bg-red-950/60 p-4 space-y-2">
+                    <p className="text-red-400 font-bold text-base flex items-center gap-2">
+                      <OctagonAlert size={18}/> COLAPSO LOGÍSTICO
                     </p>
-                    <p className="text-orange-200 text-xs">{motivoColapso}</p>
+                    <p className="text-red-300 text-xs font-semibold">La red logística ha colapsado.</p>
+                    <p className="text-red-200/80 text-xs leading-relaxed">{motivoColapso}</p>
                     {momentoColapso && <p className="text-slate-400 text-xs">Momento: <span className="text-white font-mono">{momentoColapso}</span></p>}
                     {resultado && (
                       <button
@@ -3247,7 +3291,7 @@ function App() {
                           setReporteGuardadoColapso(entrada);
                           setMostrarReporteColapso(true);
                         }}
-                        className="w-full text-xs font-bold px-3 py-1.5 rounded-lg border flex items-center justify-center gap-2 transition-colors bg-orange-900/50 hover:bg-orange-900 text-orange-300 border-orange-500/40 mt-1"
+                        className="w-full text-xs font-bold px-3 py-1.5 rounded-lg border flex items-center justify-center gap-2 transition-colors bg-red-900/50 hover:bg-red-900 text-red-300 border-red-500/40 mt-1"
                       >
                         📊 Ver reporte
                       </button>
